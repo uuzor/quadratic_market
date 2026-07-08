@@ -19,9 +19,6 @@ pub struct GlobalConfig {
     pub odds_basis: u64,                    // 8
     pub lmsr_default_b: u64,                // 8   raw lamports (B_raw)
     pub min_first_liquidity: u64,           // 8
-    pub slip_house_margin_bps: u64,         // 8
-    pub max_slip_bonus_multiplier_bps: u64, // 8
-    pub next_slip_id: u64,                  // 8
     pub current_epoch: u64,                 // 8
     pub epoch_duration_seconds: i64,        // 8
     pub withdrawal_cooldown_seconds: i64,   // 8
@@ -61,9 +58,6 @@ impl GlobalConfig {
         + 8   // odds_basis
         + 8   // lmsr_default_b
         + 8   // min_first_liquidity
-        + 8   // slip_house_margin_bps
-        + 8   // max_slip_bonus_multiplier_bps
-        + 8   // next_slip_id
         + 8   // current_epoch
         + 8   // epoch_duration_seconds
         + 8   // withdrawal_cooldown_seconds
@@ -133,7 +127,8 @@ mod tests {
     fn global_config_len_not_too_small() {
         // Borsh-serialized size of GlobalConfig fields (excluding discriminator).
         // LEN must be >= the actual struct field size; if this panics on build,
-        // increase the constant. Currently the constant is 614, which is >= 605.
-        assert!(GlobalConfig::LEN >= 605, "LEN too small for struct fields");
+        // increase the constant. Removed slip fields (24 bytes): slip_house_margin_bps,
+        // max_slip_bonus_multiplier_bps, next_slip_id. New LEN is 581.
+        assert!(GlobalConfig::LEN >= 581, "LEN too small for struct fields");
     }
 }

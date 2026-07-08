@@ -4,7 +4,7 @@
 /// without modifying state. They replicate protocol logic for client preview.
 
 use anchor_lang::prelude::*;
-use crate::state::{GlobalConfig, Market, BetSlip};
+use crate::state::{GlobalConfig, Market};
 use crate::math::lmsr;
 use crate::constants::*;
 use crate::errors::QuadraticMarketError;
@@ -35,20 +35,6 @@ pub struct QuoteSellResult {
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct QuoteSlipResult {
-    pub total_cost: u64,            // Cost for all legs
-    pub house_margin: u64,          // 5% margin per leg
-    pub total_stake: u64,           // total_cost + house_margin
-    pub potential_payout: u64,      // If all legs win
-    pub individual_odds: Vec<u64>,  // Odds per leg (decimal * 10000)
-    pub parlay_odds: u64,           // Combined odds (decimal * 10000)
-    pub correlation_bonus_bps: u64, // Bonus from correlation (basis points)
-    pub implied_probability: u64,   // Probability * 10000 (e.g., 2500 = 25%)
-    pub expected_value: i64,        // EV in basis points (signed)
-    pub lp_exposure: u64,           // Amount LP will lock
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct MarketStatsResult {
     pub market_id: u64,
     pub status: u8,                 // 0=PreOpen, 1=Open, 2=Suspended, etc.
@@ -72,25 +58,6 @@ pub struct LpStatsResult {
     pub nav_per_share: u64,         // Net asset value per LP token (scaled by 1e6)
     pub total_markets: u64,
     pub active_markets: u64,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct CashOutResult {
-    pub current_value: u64,         // Current cash-out value
-    pub original_stake: u64,        // What user paid
-    pub profit_loss: i64,           // current_value - original_stake (signed)
-    pub profit_loss_pct: i64,       // P&L percentage * 10000 (signed)
-    pub legs_status: Vec<LegStatus>, // Status of each leg
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct LegStatus {
-    pub market_id: u64,
-    pub outcome_id: u8,
-    pub current_odds: u64,          // Current decimal odds * 10000
-    pub original_odds: u64,         // Odds when placed * 10000
-    pub market_settled: bool,
-    pub is_winner: bool,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -209,75 +176,6 @@ pub fn quote_sell(
     })
 }
 
-/// Quote multi-leg parlay slip
-/// Note: This is simplified - doesn't include correlation adjustments
-/// For correlated markets, use the full slip pricing logic
-pub fn quote_slip_simple(
-    markets: &[Market],
-    outcomes: &[u8],
-    shares_per_leg: &[u64],
-) -> Result<QuoteSlipResult> {
-    require!(
-        markets.len() == outcomes.len() && markets.len() == shares_per_leg.len(),
-        QuadraticMarketError::SlipNoLegs
-    );
-    require!(markets.len() > 0, QuadraticMarketError::SlipNoLegs);
-
-    let num_legs = markets.len();
-    let mut total_cost: u64 = 0;
-    let mut individual_odds = Vec::with_capacity(num_legs);
-
-    // Calculate cost for each leg
-    for i in 0..num_legs {
-        let quote = quote_buy(&markets[i], outcomes[i], shares_per_leg[i])?;
-        total_cost = total_cost.checked_add(quote.cost).unwrap();
-        individual_odds.push(quote.new_odds[outcomes[i] as usize]);
-    }
-
-    // House margin: 5% per leg
-    let house_margin = (total_cost * 5 * num_legs as u64) / 100;
-    let total_stake = total_cost.checked_add(house_margin).unwrap();
-
-    // Calculate parlay odds (multiply individual odds)
-    // odds[i] is decimal * 10000, so we need to divide by 10000 for each multiplication
-    let mut parlay_odds: u64 = 10000; // Start at 1.0
-    for &odds in &individual_odds {
-        parlay_odds = (parlay_odds as u128 * odds as u128 / 10000) as u64;
-    }
-
-    // Potential payout = stake * parlay_odds / 10000
-    let potential_payout = (total_stake as u128 * parlay_odds as u128 / 10000) as u64;
-
-    // Implied probability = 10000 / parlay_odds
-    let implied_probability = if parlay_odds > 0 {
-        10000 * 10000 / parlay_odds
-    } else {
-        0
-    };
-
-    // Expected value = (potential_payout - total_stake) / total_stake * 10000
-    let expected_value = if total_stake > 0 {
-        (((potential_payout as i128 - total_stake as i128) * 10000) / total_stake as i128) as i64
-    } else {
-        0
-    };
-
-    // LP exposure = potential_payout - total_cost
-    let lp_exposure = potential_payout.saturating_sub(total_cost);
-
-    Ok(QuoteSlipResult {
-        total_cost,
-        house_margin,
-        total_stake,
-        potential_payout,
-        individual_odds,
-        parlay_odds,
-        correlation_bonus_bps: 0, // Simplified - no correlation
-        implied_probability,
-        expected_value,
-        lp_exposure,
-    })
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Market Stats Functions
@@ -348,85 +246,6 @@ pub fn get_lp_stats(
         nav_per_share,
         total_markets: 0,      // TODO: Track on-chain
         active_markets: 0,     // TODO: Track on-chain
-    })
-}
-
-/// Calculate cash-out value for active slip
-pub fn calculate_cash_out_value(
-    slip: &BetSlip,
-    markets: &[Market],
-) -> Result<CashOutResult> {
-    require!(
-        markets.len() == slip.num_legs as usize,
-        QuadraticMarketError::SlipNoLegs
-    );
-
-    let mut legs_status = Vec::with_capacity(markets.len());
-    let mut current_parlay_odds: u64 = 10000; // Start at 1.0
-
-    // Check each leg
-    for (i, market) in markets.iter().enumerate() {
-        let leg = &slip.legs[i];
-        
-        // Get current odds for this outcome
-        let current_odds_vec = calculate_decimal_odds(
-            &market.q_values,
-            market.num_outcomes as usize
-        )?;
-        let current_odds = current_odds_vec[leg.outcome_id as usize];
-
-        // Original odds (approximated from shares and cost)
-        // This is simplified - actual original odds would need to be stored
-        let original_odds = 20000; // TODO: Store on slip
-
-        // Check if market is settled
-        let market_settled = matches!(
-            market.status,
-            crate::state::market::MarketStatus::Settled
-        );
-        let is_winner = market_settled && market.winning_outcome == leg.outcome_id;
-
-        legs_status.push(LegStatus {
-            market_id: leg.market_id,
-            outcome_id: leg.outcome_id,
-            current_odds,
-            original_odds,
-            market_settled,
-            is_winner,
-        });
-
-        // If any leg lost, entire slip is worthless
-        if market_settled && !is_winner {
-            return Ok(CashOutResult {
-                current_value: 0,
-                original_stake: slip.total_stake,
-                profit_loss: -(slip.total_stake as i64),
-                profit_loss_pct: -10000, // -100%
-                legs_status,
-            });
-        }
-
-        // If leg not settled, include current odds in calculation
-        if !market_settled {
-            current_parlay_odds = (current_parlay_odds as u128 * current_odds as u128 / 10000) as u64;
-        }
-    }
-
-    // Calculate current value based on remaining legs
-    let current_value = (slip.total_stake as u128 * current_parlay_odds as u128 / 10000) as u64;
-    let profit_loss = current_value as i64 - slip.total_stake as i64;
-    let profit_loss_pct = if slip.total_stake > 0 {
-        (profit_loss * 10000) / slip.total_stake as i64
-    } else {
-        0
-    };
-
-    Ok(CashOutResult {
-        current_value,
-        original_stake: slip.total_stake,
-        profit_loss,
-        profit_loss_pct,
-        legs_status,
     })
 }
 

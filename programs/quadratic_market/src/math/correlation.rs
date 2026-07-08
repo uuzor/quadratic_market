@@ -1,6 +1,5 @@
 use crate::constants::{
-    CORRELATION_MAX_BPS, MAX_OUTCOMES, MAX_SAME_GAME_STATES, MIN_SLIP_LEGS_FOR_BONUS, SCALE,
-    SLIP_BONUS_INCREMENT_BPS,
+    CORRELATION_MAX_BPS, MAX_OUTCOMES, MAX_SAME_GAME_STATES, SCALE,
 };
 use crate::errors::QuadraticMarketError;
 use crate::state::CorrelationPair;
@@ -32,7 +31,7 @@ pub fn compute_joint_probability_fp(
         state_probabilities.len() >= num_states as usize,
         QuadraticMarketError::InvalidAmount
     );
-    require!(!outcomes.is_empty(), QuadraticMarketError::SlipNoLegs);
+    require!(!outcomes.is_empty(), QuadraticMarketError::InvalidAmount);
 
     let mut joint_mask = if num_states as usize == MAX_SAME_GAME_STATES {
         u64::MAX
@@ -172,7 +171,7 @@ pub fn compute_adjusted_q_values(
 /// Returns combined odds in basis points.
 pub fn compute_combined_odds_bps(leg_probabilities: &[u64], num_legs: u8) -> Result<u64> {
     if num_legs == 0 {
-        return Err(QuadraticMarketError::SlipNoLegs.into());
+        return Err(QuadraticMarketError::InvalidAmount.into());
     }
 
     if num_legs == 1 {
@@ -218,28 +217,6 @@ pub fn compute_combined_odds_bps(leg_probabilities: &[u64], num_legs: u8) -> Res
     Ok(odds_bps as u64)
 }
 
-/// Compute the bonus multiplier for multi-leg slips.
-/// Bonus kicks in at MIN_SLIP_LEGS_FOR_BONUS legs, increasing by SLIP_BONUS_INCREMENT_BPS per extra leg,
-/// capped at max_bonus_bps.
-pub fn compute_bonus_multiplier(num_legs: u8, max_bonus_bps: u64) -> Result<u64> {
-    if num_legs < MIN_SLIP_LEGS_FOR_BONUS {
-        return Ok(CORRELATION_MAX_BPS); // 1.0x (no bonus)
-    }
-    // At threshold (5 legs): base bonus = SLIP_BONUS_INCREMENT_BPS
-    // Each extra leg above threshold adds another increment
-    let extra_legs = (num_legs - MIN_SLIP_LEGS_FOR_BONUS) as u64;
-    let bonus = CORRELATION_MAX_BPS
-        .checked_add(SLIP_BONUS_INCREMENT_BPS)
-        .ok_or(QuadraticMarketError::MathOverflow)?
-        .checked_add(
-            extra_legs
-                .checked_mul(SLIP_BONUS_INCREMENT_BPS)
-                .ok_or(QuadraticMarketError::MathOverflow)?,
-        )
-        .ok_or(QuadraticMarketError::MathOverflow)?;
-    // Cap at max_bonus_bps
-    Ok(std::cmp::min(bonus, max_bonus_bps))
-}
 
 /// Compute the multiplicative combined odds from multiple legs, with house margin and bonus.
 /// Each leg price is an LMSR price (Q32.32 probability).
@@ -259,7 +236,7 @@ pub fn compute_combined_odds_fp(
     bonus_multiplier_bps: u64,
 ) -> Result<u64> {
     if num_legs == 0 {
-        return Err(QuadraticMarketError::SlipNoLegs.into());
+        return Err(QuadraticMarketError::InvalidAmount.into());
     }
 
     let margin_factor = CORRELATION_MAX_BPS
@@ -434,26 +411,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_bonus_multiplier_no_bonus_below_threshold() {
-        // 4 legs < MIN_SLIP_LEGS_FOR_BONUS (5) → no bonus
-        let bonus = compute_bonus_multiplier(4, 30_000).unwrap();
-        assert_eq!(bonus, CORRELATION_MAX_BPS); // 1.0x
-    }
-
-    #[test]
-    fn test_bonus_multiplier_at_threshold() {
-        // 5 legs → 1 extra leg → +1000 bps = 11000 bps = 1.1x
-        let bonus = compute_bonus_multiplier(5, 30_000).unwrap();
-        assert_eq!(bonus, CORRELATION_MAX_BPS + SLIP_BONUS_INCREMENT_BPS);
-    }
-
-    #[test]
-    fn test_bonus_multiplier_capped() {
-        // 8 legs → 10000 + 1000 + 3*1000 = 14000, but cap at 12000
-        let bonus = compute_bonus_multiplier(8, 12_000).unwrap();
-        assert_eq!(bonus, 12_000); // capped
-    }
 
     #[test]
     fn test_combined_odds_fp_no_margin() {
@@ -500,22 +457,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_combined_odds_fp_with_bonus() {
-        // 5 legs at 50% each, 5% margin, bonus at 5 legs = 1.1x
-        let p = SCALE / 2;
-        let prices = [p, p, p, p, p];
-        let bonus = compute_bonus_multiplier(5, 30_000).unwrap();
-        let odds = compute_combined_odds_fp(&prices, 5, 500, bonus).unwrap();
-        // Raw combined = 32.0, margin = 32.0 * 0.95^5 ≈ 24.76, bonus 1.1x = 27.24
-        let expected_fp = (27.24 * SCALE as f64) as u64;
-        assert!(
-            (odds as i64 - expected_fp as i64).unsigned_abs() < SCALE,
-            "Expected ~27.24 ({}), got {}",
-            expected_fp,
-            odds
-        );
-    }
 
     fn fp_bps(bps: u64) -> u64 {
         (SCALE as u128 * bps as u128 / 10_000u128) as u64

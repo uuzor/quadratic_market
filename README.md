@@ -16,12 +16,10 @@ A Solana-based prediction market protocol with quadratic pricing (LMSR), P2P lim
    - All trades happen via a Polymarket-style P2P limit order book
    - Orders can be placed, filled, and cancelled
 
-3. **LP with Multi-Bet Protection**
-   - Liquidity providers hedge multi-bet slips
-   - When a multi-bet is placed, it targets individual markets
-   - If the bet loses but some legs win, the winning legs go to the LP pool
-   - If all legs win, the user wins plus an additional LP bonus
-   - If no legs win, the user loses their stake
+3. **Correlated Market Pricing**
+   - Markets can be grouped for correlated pricing
+   - Single-leg trades within groups receive correlation-adjusted pricing
+   - Supports same-game state models and outcome masks
 
 4. **Epoch-Based LP**
    - Deposit and withdraw operations are epoch-based
@@ -71,9 +69,7 @@ A Solana-based prediction market protocol with quadratic pricing (LMSR), P2P lim
 
 | Issue | Severity | Description |
 |-------|----------|-------------|
-| Issue 1 | Medium | `claim_paused_bet` does not burn outcome tokens |
-| Issue 2 | Low | `claim_slip` does not close BetSlip PDA |
-| Issue 3 | Low | `GlobalConfig::LEN` overcalculated by 9 bytes |
+| Issue 1 | Low | `GlobalConfig::LEN` overcalculated by 9 bytes |
 
 ## Bot Setup
 

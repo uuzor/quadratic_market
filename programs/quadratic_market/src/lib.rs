@@ -19,13 +19,11 @@ pub mod market_group;
 pub mod market_ops;
 pub mod orders;
 pub mod settlement;
-pub mod slip;
 pub mod swap_trade;
 pub mod trade;
 
 // Bring all account structs into scope so Anchor's #[program]
 // macro references them directly
-use crate::state::bet_slip::SlipLeg;
 use crate::state::market::MarketMode;
 use crate::state::market_group::CorrelationPair;
 use crate::state::order::OrderSide;
@@ -38,18 +36,14 @@ use market_group::*;
 use market_ops::*;
 use orders::*;
 use settlement::*;
-use slip::*;
 use swap_trade::*;
 use trade::*;
 
 // ─── Custom heap allocator ─────────────────────────────────────
 // Anchor's default bump allocator hardcodes a 32 KB heap and ignores the
-// runtime `RequestHeapFrame` compute-budget instruction. Multi-leg place_slip
-// deserializes a full Market per leg plus boxed MarketGroup snapshots, which
-// can exceed 32 KB and abort with "memory allocation failed, out of memory".
-//
-// Enabling the `custom-heap` feature and providing this bump allocator lets the
-// program use the full heap region (up to 256 KB) requested via RequestHeapFrame.
+// runtime `RequestHeapFrame` compute-budget instruction. For markets with
+// large state structures, enabling the `custom-heap` feature allows using
+// the full heap region (up to 256 KB) requested via RequestHeapFrame.
 #[program]
 pub mod quadratic_market {
     use super::*;
@@ -84,8 +78,6 @@ pub mod quadratic_market {
         challenge_window_seconds: Option<i64>,
         settlement_deadline_seconds: Option<i64>,
         lmsr_default_b: Option<u64>,
-        slip_house_margin_bps: Option<u64>,
-        max_slip_bonus_multiplier_bps: Option<u64>,
         epoch_duration_seconds: Option<i64>,
         withdrawal_cooldown_seconds: Option<i64>,
         max_single_bet: Option<u64>,
@@ -100,8 +92,6 @@ pub mod quadratic_market {
             challenge_window_seconds,
             settlement_deadline_seconds,
             lmsr_default_b,
-            slip_house_margin_bps,
-            max_slip_bonus_multiplier_bps,
             epoch_duration_seconds,
             withdrawal_cooldown_seconds,
             max_single_bet,
@@ -259,14 +249,6 @@ pub mod quadratic_market {
         close_market_handler(ctx, market_id)
     }
 
-    /// Refund a user's original stake when the protocol is paused.
-    pub fn claim_paused_bet<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimPausedBet<'info>>,
-        slip_id: u64,
-    ) -> Result<()> {
-        claim_paused_bet_handler(ctx, slip_id)
-    }
-
     // ─── Market Group Operations ────────────────────────────────
 
     pub fn create_market_group(
@@ -373,60 +355,6 @@ pub mod quadratic_market {
         sell_shares_correlated_handler(ctx, outcome_id, num_shares, min_payout)
     }
 
-    // ─── Bet Slip ───────────────────────────────────────────────
-
-    pub fn place_slip<'info>(
-        ctx: Context<'_, '_, '_, 'info, PlaceSlip<'info>>,
-        legs: Vec<SlipLeg>,
-        max_payment: u64,
-        num_groups: u8,
-    ) -> Result<()> {
-        place_slip_handler(ctx, legs, max_payment, num_groups)
-    }
-
-    // Multi-leg slips assembled across transactions (avoids the single-tx heap
-    // exhaustion in place_slip): open_slip → add_slip_leg (×N) → finalize_slip,
-    // with cancel_slip to abort a partially-built slip.
-    pub fn open_slip(
-        ctx: Context<OpenSlip>,
-        slip_id: u64,
-        num_legs: u8,
-        max_payment: u64,
-    ) -> Result<()> {
-        open_slip_handler(ctx, slip_id, num_legs, max_payment)
-    }
-
-    pub fn add_slip_leg(ctx: Context<AddSlipLeg>, slip_id: u64, leg: SlipLeg) -> Result<()> {
-        add_slip_leg_handler(ctx, slip_id, leg)
-    }
-
-    pub fn finalize_slip(ctx: Context<FinalizeSlip>, slip_id: u64) -> Result<()> {
-        finalize_slip_handler(ctx, slip_id)
-    }
-
-    pub fn cancel_slip(ctx: Context<CancelSlip>, slip_id: u64) -> Result<()> {
-        cancel_slip_handler(ctx, slip_id)
-    }
-
-    pub fn claim_slip<'info>(
-        ctx: Context<'_, '_, '_, 'info, ClaimSlip<'info>>,
-        slip_id: u64,
-        num_groups: u8,
-    ) -> Result<()> {
-        claim_slip_handler(ctx, slip_id, num_groups)
-    }
-
-    pub fn update_slip_lock(ctx: Context<UpdateSlipLock>, slip_id: u64) -> Result<()> {
-        update_slip_lock_handler(ctx, slip_id)
-    }
-
-    pub fn cash_out_slip<'info>(
-        ctx: Context<'_, '_, '_, 'info, CashOutSlip<'info>>,
-        slip_id: u64,
-    ) -> Result<()> {
-        cash_out_slip_handler(ctx, slip_id)
-    }
-
     // ─── Peer-to-Peer Order Book ────────────────────────────────
 
     pub fn place_order(
@@ -514,30 +442,6 @@ pub mod quadratic_market {
         queries::quote_sell(&ctx.accounts.market, outcome_id, num_shares)
     }
 
-    /// Quote a multi-leg parlay slip (simplified, no correlations)
-    pub fn view_quote_slip(
-        ctx: Context<ViewQuoteSlip>,
-        outcomes: Vec<u8>,
-        shares_per_leg: Vec<u64>,
-    ) -> Result<queries::QuoteSlipResult> {
-        // Remaining accounts should be Market accounts for each leg
-        let num_markets = ctx.remaining_accounts.len();
-        require!(
-            num_markets == outcomes.len() && num_markets == shares_per_leg.len(),
-            errors::QuadraticMarketError::SlipNoLegs
-        );
-
-        let mut markets = Vec::with_capacity(num_markets);
-        for market_info in ctx.remaining_accounts.iter() {
-            let market_data = market_info.try_borrow_data()?;
-            // Manually deserialize to avoid lifetime issues
-            let market: state::Market = state::Market::try_deserialize(&mut &market_data[..])?;
-            markets.push(market);
-        }
-
-        queries::quote_slip_simple(&markets, &outcomes, &shares_per_leg)
-    }
-
     /// Get comprehensive market statistics
     pub fn view_market_stats(ctx: Context<ViewMarketStats>) -> Result<queries::MarketStatsResult> {
         let clock = Clock::get()?;
@@ -550,20 +454,6 @@ pub mod quadratic_market {
             &ctx.accounts.global_config,
             ctx.accounts.treasury_base_ata.amount,
         )
-    }
-
-    /// Calculate current cash-out value for an active slip
-    pub fn view_cash_out_value(ctx: Context<ViewCashOutValue>) -> Result<queries::CashOutResult> {
-        // Remaining accounts should be Market accounts for each leg
-        let mut markets = Vec::with_capacity(ctx.remaining_accounts.len());
-        for market_info in ctx.remaining_accounts.iter() {
-            let market_data = market_info.try_borrow_data()?;
-            // Manually deserialize to avoid lifetime issues
-            let market: state::Market = state::Market::try_deserialize(&mut &market_data[..])?;
-            markets.push(market);
-        }
-
-        queries::calculate_cash_out_value(&ctx.accounts.bet_slip, &markets)
     }
 }
 
@@ -582,11 +472,6 @@ pub struct ViewQuoteSell<'info> {
 }
 
 #[derive(Accounts)]
-pub struct ViewQuoteSlip {
-    // Markets passed as remaining_accounts
-}
-
-#[derive(Accounts)]
 pub struct ViewMarketStats<'info> {
     pub market: Account<'info, state::Market>,
 }
@@ -595,10 +480,4 @@ pub struct ViewMarketStats<'info> {
 pub struct ViewLpStats<'info> {
     pub global_config: Account<'info, state::GlobalConfig>,
     pub treasury_base_ata: Account<'info, anchor_spl::token::TokenAccount>,
-}
-
-#[derive(Accounts)]
-pub struct ViewCashOutValue<'info> {
-    pub bet_slip: Account<'info, state::BetSlip>,
-    // Markets passed as remaining_accounts
 }

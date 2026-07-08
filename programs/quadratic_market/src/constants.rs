@@ -38,7 +38,6 @@ pub mod seeds {
     pub const DISPUTE: &[u8] = b"dispute";
     pub const WITHDRAWAL: &[u8] = b"withdrawal";
     pub const MARKET_GROUP: &[u8] = b"market_group";
-    pub const BET_SLIP: &[u8] = b"bet_slip";
     pub const PENDING: &[u8] = b"pending";
     pub const ORDER: &[u8] = b"order";
     pub const EPOCH: &[u8] = b"epoch";
@@ -57,13 +56,6 @@ pub const DEFAULT_MAX_SEED_SIDE_SHARE_BPS: u64 = 7_000; // largest seeded side <
                                                         // PreOpen market can be activated. Seeders are early bettors whose escrowed
                                                         // capital backs the market's bounded LMSR max-loss (B·ln(N)).
 pub const MIN_SEED_PER_OUTCOME: u64 = 500_000_000; // 500 USDC (6 decimals)
-
-// Bet slip
-pub const MAX_SLIP_LEGS: usize = 8;
-pub const DEFAULT_SLIP_HOUSE_MARGIN_BPS: u64 = 500; // 5% per leg
-pub const DEFAULT_MAX_SLIP_BONUS_BPS: u64 = 30_000; // 3.0x max bonus
-pub const MIN_SLIP_LEGS_FOR_BONUS: u8 = 2; // bonus kicks in on multi-leg slips
-pub const SLIP_BONUS_INCREMENT_BPS: u64 = 1_000; // +10% per leg above threshold
 
 // LP epoch / timing
 pub const DEFAULT_EPOCH_DURATION_SECONDS: i64 = 86_400; // 24 hours

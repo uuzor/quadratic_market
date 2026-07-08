@@ -2,187 +2,199 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum QuadraticMarketError {
-    // 0-99: General errors
     #[msg("Not authorized")]
     Unauthorized = 0,
+
     #[msg("Protocol is paused")]
     Paused = 1,
+
     #[msg("Invalid amount")]
     InvalidAmount = 2,
+
+    #[msg("Amount too small")]
+    AmountTooSmall = 3,
+
     #[msg("Insufficient liquidity")]
-    InsufficientLiquidity = 3,
+    InsufficientLiquidity = 4,
+
     #[msg("Math overflow")]
-    MathOverflow = 4,
+    MathOverflow = 5,
+
     #[msg("Math underflow")]
-    MathUnderflow = 5,
+    MathUnderflow = 6,
+
     #[msg("Market backing insufficient to cover position liability")]
-    InsufficientMarketBacking = 6,
+    InsufficientMarketBacking = 7,
 
     // 100-199: Market errors
     #[msg("Market not open for trading")]
     MarketNotOpen = 100,
+
     #[msg("Market has already started")]
     MarketAlreadyStarted = 101,
+
     #[msg("Invalid outcome ID")]
     InvalidOutcomeId = 102,
+
     #[msg("Maximum exposure reached")]
     MaxExposureReached = 103,
+
     #[msg("Market already settled")]
     MarketAlreadySettled = 104,
+
     #[msg("Invalid number of outcomes")]
     InvalidNumOutcomes = 105,
+
     #[msg("Market not settled")]
     MarketNotSettled = 106,
+
     #[msg("Market not voidable")]
     MarketNotVoidable = 108,
+
     #[msg("Invalid market status for this operation")]
     InvalidMarketStatus = 109,
+
     #[msg("Market has expired for new positions")]
     MarketExpired = 110,
+
     #[msg("Market settlement deadline has not passed")]
     SettlementDeadlineNotPassed = 111,
 
     // 200-299: Trading errors
     #[msg("Insufficient shares to sell")]
     InsufficientShares = 200,
-    #[msg("Slippage exceeded: minimum shares not received")]
-    SlippageExceeded = 201,
+
     #[msg("LMSR cost exceeds maximum payment")]
-    LmsrCostExceedsMax = 202,
+    LmsrCostExceedsMax = 201,
+
     #[msg("LMSR sell price below minimum")]
-    LmsrSellBelowMin = 203,
+    LmsrSellBelowMin = 202,
+
     #[msg("Bet size exceeds maximum allowed")]
-    BetTooLarge = 204,
+    BetTooLarge = 203,
+
     #[msg("Outcome probability is below the minimum floor — odds too short")]
-    OddsFloor = 205,
+    OddsFloor = 204,
+
+    #[msg("Outcome token mint does not match expected outcome")]
+    WrongOutcomeToken = 205,
+
+    #[msg("Payout has already been claimed")]
+    PayoutAlreadyClaimed = 206,
+
+    #[msg("There are no winning positions to settle")]
+    NoWinningPositions = 207,
+
+    #[msg("Insufficient free liquidity for this operation")]
+    InsufficientFreeLiquidity = 208,
+
+    #[msg("Insufficient LP shares")]
+    InsufficientLpShares = 209,
+
+    #[msg("Shares are still locked")]
+    SharesStillLocked = 210,
+
+    #[msg("Challenge window has expired")]
+    ChallengeWindowExpired = 211,
 
     // 300-399: Settlement errors
     #[msg("Challenge window still active")]
     ChallengeWindowActive = 300,
-    #[msg("Challenge window has expired")]
-    ChallengeWindowExpired = 301,
-    #[msg("Maximum dispute rounds reached")]
-    MaxDisputeRounds = 303,
+
     #[msg("No dispute to finalize")]
-    NoDisputeToFinalize = 304,
+    NoDisputeToFinalize = 301,
+
+    #[msg("Invalid winning outcome")]
+    InvalidWinningOutcome = 302,
+
     #[msg("Invalid proposed outcome")]
-    InvalidProposedOutcome = 305,
-    #[msg("Invalid oracle signature — transaction must be signed by the oracle key")]
-    InvalidOracleSignature = 307,
+    InvalidProposedOutcome = 303,
 
-    // 400-499: LP errors
-    #[msg("Amount too small for first deposit")]
-    AmountTooSmall = 400,
-    #[msg("Insufficient LP shares")]
-    InsufficientLpShares = 401,
-    #[msg("Withdrawal request already exists")]
-    WithdrawalAlreadyExists = 402,
-    #[msg("No withdrawal request found")]
-    NoWithdrawalRequest = 403,
-    #[msg("Insufficient free liquidity for withdrawal")]
-    InsufficientFreeLiquidity = 404,
-    #[msg("Withdrawal cooldown has not elapsed")]
-    CooldownNotElapsed = 405,
-    #[msg("No pending liquidity to activate")]
-    NoPendingLiquidity = 406,
-    #[msg("LP shares are still locked pending activation")]
-    SharesStillLocked = 407,
+    #[msg("Invalid oracle signature")]
+    InvalidOracleSignature = 304,
 
-    // 500-599: Claim errors
-    #[msg("No winning positions to claim")]
-    NoWinningPositions = 500,
-    #[msg("Payout already claimed")]
-    PayoutAlreadyClaimed = 501,
-    #[msg("Wrong outcome token for claim")]
-    WrongOutcomeToken = 502,
-
-    // 600-699: Swap errors
-    #[msg("Swap amount below minimum")]
-    SwapBelowMinimum = 600,
-    #[msg("Swap failed")]
-    SwapFailed = 601,
-
-    // 700-799: Correlated market / slip errors
-    #[msg("Market group not found")]
-    MarketGroupNotFound = 700,
-    #[msg("Market already belongs to a group")]
-    MarketAlreadyInGroup = 701,
-    #[msg("Market group is full")]
-    MarketGroupFull = 702,
-    #[msg("Correlation weight exceeds maximum")]
-    CorrelationOutOfBounds = 703,
-    #[msg("Group exposure cap exceeded")]
-    GroupExposureExceeded = 704,
-    #[msg("Market is not in the specified group")]
-    MarketNotInGroup = 705,
-    #[msg("Bet slip has no legs")]
-    SlipNoLegs = 706,
-    #[msg("Bet slip has too many legs")]
-    SlipTooManyLegs = 707,
-    #[msg("Bet slip cost exceeds maximum payment")]
-    SlipCostExceeded = 708,
-    #[msg("Bet slip not fully settled")]
-    SlipNotSettled = 709,
-    #[msg("Bet slip already claimed")]
-    SlipAlreadyClaimed = 710,
-    #[msg("Correlation calculation overflow")]
-    CorrelationOverflow = 711,
-    #[msg("Market group event has started")]
-    GroupEventStarted = 712,
-    #[msg("Correlation matrix is locked after first trade")]
-    CorrelationMatrixLocked = 713,
-    #[msg("Invalid account in remaining_accounts")]
-    InvalidRemainingAccount = 714,
-    #[msg("Slip lock update failed")]
-    SlipLockUpdateFailed = 715,
-    #[msg("Bet slip has a voided leg — refunding stake")]
-    SlipPartiallyVoided = 716,
-    #[msg("Operator list is full")]
-    OperatorListFull = 717,
-    #[msg("Operator not found")]
-    OperatorNotFound = 718,
-    #[msg("Direct share trading is disabled on fixed-odds markets")]
-    DirectTradingDisabled = 719,
-    #[msg("Order is not in a cancellable state")]
-    OrderNotCancellable = 720,
-    #[msg("Order has not expired")]
-    OrderNotExpired = 721,
-    #[msg("Order has expired")]
-    OrderExpired = 725,
-    #[msg("Order is not open for filling")]
-    OrderNotFillable = 722,
-    #[msg("Fill amount exceeds remaining order quantity")]
-    FillExceedsOrder = 723,
-    #[msg("Bet slip has already been cashed out")]
-    SlipAlreadyCashedOut = 724,
-    #[msg("Seeded market has not reached minimum bootstrapping requirements")]
-    SeedMarketNotReady = 726,
-    #[msg("Bet slip is not in the building state")]
-    SlipNotBuilding = 727,
-    #[msg("Bet slip leg index is out of order or already added")]
-    SlipLegOutOfOrder = 728,
-    #[msg("Bet slip already finalized")]
-    SlipAlreadyFinalized = 729,
-    #[msg("Bet slip legs are not all added yet")]
-    SlipLegsIncomplete = 730,
-    #[msg("Bet slip is not active")]
-    SlipNotActive = 731,
-    #[msg("Bet slip leg duplicates an existing leg's market")]
-    SlipDuplicateMarket = 732,
-
-    // 800-899: Epoch errors
-    #[msg("Epoch has not completed — not all markets are settled")]
-    EpochNotComplete = 800,
-    #[msg("Withdrawals are not yet enabled for this epoch")]
-    EpochWithdrawalsNotEnabled = 801,
+    // 400-499: LP/Epoch errors
     #[msg("Epoch is paused — no deposits or withdrawals allowed")]
-    EpochPaused = 802,
-    #[msg("Market does not belong to the specified epoch")]
-    MarketEpochMismatch = 803,
-    #[msg("Epoch account does not match the market's epoch")]
-    EpochAccountMismatch = 804,
-    #[msg("No active epoch — call init_epoch first")]
-    NoActiveEpoch = 805,
-    #[msg("Bet is not refundable — protocol is not paused")]
-    NotPaused = 806,
+    EpochPaused = 400,
+
+    #[msg("Epoch is not complete")]
+    EpochNotComplete = 401,
+
+    #[msg("Cooldown has not elapsed")]
+    CooldownNotElapsed = 402,
+
+    #[msg("Epoch account mismatch")]
+    EpochAccountMismatch = 403,
+
+    #[msg("Epoch withdrawals are not enabled")]
+    EpochWithdrawalsNotEnabled = 404,
+
+    #[msg("No pending liquidity found")]
+    NoPendingLiquidity = 405,
+
+    // 500-599: Correlation errors
+    #[msg("Market group not found")]
+    MarketGroupNotFound = 500,
+
+    #[msg("Market group is full")]
+    MarketGroupFull = 501,
+
+    #[msg("Market not in group")]
+    MarketNotInGroup = 502,
+
+    #[msg("Market already in group")]
+    MarketAlreadyInGroup = 503,
+
+    #[msg("Correlation out of bounds")]
+    CorrelationOutOfBounds = 504,
+
+    // 600-699: Risk management errors
+    #[msg("Group exposure exceeded")]
+    GroupExposureExceeded = 600,
+
+    #[msg("Market group event has started")]
+    GroupEventStarted = 601,
+
+    #[msg("Correlation matrix is locked after first trade")]
+    CorrelationMatrixLocked = 602,
+
+    #[msg("Invalid account in remaining_accounts")]
+    InvalidRemainingAccount = 603,
+
+    #[msg("Correlation calculation overflow")]
+    CorrelationOverflow = 604,
+
+    #[msg("Operator list is full")]
+    OperatorListFull = 605,
+
+    #[msg("Operator not found")]
+    OperatorNotFound = 606,
+
+    #[msg("Direct share trading is disabled on fixed-odds markets")]
+    DirectTradingDisabled = 607,
+
+    #[msg("Order is not in a cancellable state")]
+    OrderNotCancellable = 608,
+
+    #[msg("Order has expired")]
+    OrderExpired = 609,
+
+    #[msg("Order has not expired")]
+    OrderNotExpired = 610,
+
+    #[msg("Order is not open for filling")]
+    OrderNotFillable = 611,
+
+    #[msg("Fill amount exceeds remaining order quantity")]
+    FillExceedsOrder = 612,
+
+    #[msg("Seeded market has not reached minimum bootstrapping requirements")]
+    SeedMarketNotReady = 613,
+
+    #[msg("Swap below minimum threshold")]
+    SwapBelowMinimum = 614,
+
+    // 900-999: Misc
+    #[msg("Not implemented")]
+    NotImplemented = 900,
 }

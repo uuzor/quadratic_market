@@ -70,8 +70,6 @@ pub fn update_config_handler(
     challenge_window_seconds: Option<i64>,
     settlement_deadline_seconds: Option<i64>,
     lmsr_default_b: Option<u64>,
-    slip_house_margin_bps: Option<u64>,
-    max_slip_bonus_multiplier_bps: Option<u64>,
     epoch_duration_seconds: Option<i64>,
     withdrawal_cooldown_seconds: Option<i64>,
     max_single_bet: Option<u64>,
@@ -102,9 +100,6 @@ pub fn update_config_handler(
     if let Some(v) = buy_fee_bps {
         require!(v < 10_000, QuadraticMarketError::InvalidAmount); // must be < 100%
     }
-    if let Some(v) = slip_house_margin_bps {
-        require!(v < 10_000, QuadraticMarketError::InvalidAmount);
-    }
     if let Some(v) = cash_out_margin_bps {
         require!(v < 10_000, QuadraticMarketError::InvalidAmount);
     }
@@ -121,12 +116,6 @@ pub fn update_config_handler(
     }
     if let Some(v) = lmsr_default_b {
         config.lmsr_default_b = v;
-    }
-    if let Some(v) = slip_house_margin_bps {
-        config.slip_house_margin_bps = v;
-    }
-    if let Some(v) = max_slip_bonus_multiplier_bps {
-        config.max_slip_bonus_multiplier_bps = v;
     }
     if let Some(v) = epoch_duration_seconds {
         config.epoch_duration_seconds = v;

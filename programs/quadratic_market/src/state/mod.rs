@@ -1,4 +1,3 @@
-pub mod bet_slip;
 pub mod dispute;
 pub mod epoch;
 pub mod global_config;
@@ -8,7 +7,6 @@ pub mod order;
 pub mod pending_liquidity;
 pub mod withdrawal_request;
 
-pub use bet_slip::*;
 pub use dispute::*;
 pub use epoch::*;
 pub use global_config::*;

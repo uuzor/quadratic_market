@@ -1,8 +1,8 @@
 use crate::constants::{
     seeds, DEFAULT_BUY_FEE_BPS, DEFAULT_CASH_OUT_MARGIN_BPS, DEFAULT_CHALLENGE_WINDOW,
     DEFAULT_EPOCH_DURATION_SECONDS, DEFAULT_LMSR_B_FP, DEFAULT_MAX_SINGLE_BET,
-    DEFAULT_MAX_SLIP_BONUS_BPS, DEFAULT_MIN_OUTCOME_PRICE_BPS, DEFAULT_SETTLEMENT_DEADLINE,
-    DEFAULT_SLIP_HOUSE_MARGIN_BPS, DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS, MAX_OPERATORS,
+    DEFAULT_MIN_OUTCOME_PRICE_BPS, DEFAULT_SETTLEMENT_DEADLINE,
+    DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS, MAX_OPERATORS,
     MIN_FIRST_LIQUIDITY,
 };
 use crate::state::GlobalConfig;
@@ -70,9 +70,6 @@ pub fn handler(
     config.odds_basis = 10_000;
     config.lmsr_default_b = DEFAULT_LMSR_B_FP;
     config.min_first_liquidity = MIN_FIRST_LIQUIDITY;
-    config.slip_house_margin_bps = DEFAULT_SLIP_HOUSE_MARGIN_BPS;
-    config.max_slip_bonus_multiplier_bps = DEFAULT_MAX_SLIP_BONUS_BPS;
-    config.next_slip_id = 1;
     config.current_epoch = 0;
     config.epoch_duration_seconds = DEFAULT_EPOCH_DURATION_SECONDS;
     config.withdrawal_cooldown_seconds = DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS;
