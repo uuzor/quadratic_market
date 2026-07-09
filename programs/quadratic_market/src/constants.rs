@@ -62,7 +62,7 @@ pub const DEFAULT_EPOCH_DURATION_SECONDS: i64 = 86_400; // 24 hours
 pub const DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS: i64 = 86_400; // 24 hours
 
 // Sports risk controls
-pub const DEFAULT_MAX_SINGLE_BET: u64 = 10_000_000_000; // 10,000 USDC — overridable per market
+pub const DEFAULT_MAX_SINGLE_BET: u64 = 100_000_000_000; // 100,000 USDC — overridable per market
 pub const DEFAULT_MIN_OUTCOME_PRICE_BPS: u64 = 100; // 1% minimum implied probability
 pub const DEFAULT_BUY_FEE_BPS: u64 = 100; // 1% house fee on direct buys
 

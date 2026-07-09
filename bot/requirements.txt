@@ -6,3 +6,4 @@ asyncio
 solders 
 anchorpy 
 structlog
+httpx

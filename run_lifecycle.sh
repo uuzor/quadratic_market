@@ -15,7 +15,8 @@ RPC_URL="http://127.0.0.1:8899"
 LEDGER_DIR="/tmp/lifecycle-ledger"
 VALIDATOR_LOG="/tmp/lifecycle-validator.log"
 
-export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+# Set up PATH with Solana and Anchor
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$HOME/.cargo/bin:$HOME/.avm/bin:$PATH"
 export ANCHOR_PROVIDER_URL="$RPC_URL"
 export ANCHOR_WALLET="$WALLET"
 export PROGRAM_ID
@@ -26,6 +27,9 @@ echo "=== Quadratic Market — Full Lifecycle Runner ==="
 echo "Program ID : $PROGRAM_ID"
 echo "Wallet     : $WALLET"
 echo "RPC URL    : $RPC_URL"
+echo ""
+echo "Solana version: $(solana --version 2>/dev/null || echo 'not found')"
+echo "Anchor version: $(anchor --version 2>/dev/null || echo 'not found')"
 echo ""
 
 echo ">>> Building program..."

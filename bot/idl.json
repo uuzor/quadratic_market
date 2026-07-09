@@ -1,5 +1,5 @@
 {
-  "address": "54kfyBYeASZr4BqyWatkTqmBJTzgQ8XoEs5vaC8wxkRU",
+  "address": "3MsEuMziRKjA1w1WTPeW5NvDUCjGoep2QZ5zBthGq23Z",
   "metadata": {
     "name": "quadratic_market",
     "version": "0.1.0",
@@ -1382,7 +1382,7 @@
         {
           "name": "prev_epoch",
           "docs": [
-            "Previous epoch — must be fully settled before we can advance."
+            "Previous epoch \u2014 must be fully settled before we can advance."
           ],
           "pda": {
             "seeds": [
@@ -4908,7 +4908,7 @@
         {
           "name": "epoch",
           "docs": [
-            "Epoch account for the current epoch — must match global_config.current_epoch.",
+            "Epoch account for the current epoch \u2014 must match global_config.current_epoch.",
             "Markets are always created under the active epoch so the epoch can track",
             "how many markets need to settle before LP withdrawals are unlocked."
           ],
@@ -5281,7 +5281,7 @@
         {
           "name": "caller",
           "docs": [
-            "Anyone can call expire — they receive the PDA rent."
+            "Anyone can call expire \u2014 they receive the PDA rent."
           ],
           "writable": true,
           "signer": true
@@ -6382,7 +6382,7 @@
     {
       "name": "pause_epoch",
       "docs": [
-        "Pause epoch — blocks deposits, withdrawals, and market creation.",
+        "Pause epoch \u2014 blocks deposits, withdrawals, and market creation.",
         "Admin can pause at any time (e.g. between epochs or for emergency)."
       ],
       "discriminator": [
@@ -9619,7 +9619,7 @@
     {
       "name": "unpause_epoch",
       "docs": [
-        "Unpause epoch — re-enables deposits, withdrawals, and market creation."
+        "Unpause epoch \u2014 re-enables deposits, withdrawals, and market creation."
       ],
       "discriminator": [
         7,
@@ -9730,18 +9730,6 @@
         },
         {
           "name": "lmsr_default_b",
-          "type": {
-            "option": "u64"
-          }
-        },
-        {
-          "name": "slip_house_margin_bps",
-          "type": {
-            "option": "u64"
-          }
-        },
-        {
-          "name": "max_slip_bonus_multiplier_bps",
           "type": {
             "option": "u64"
           }
@@ -10736,7 +10724,7 @@
     {
       "code": 6205,
       "name": "OddsFloor",
-      "msg": "Outcome probability is below the minimum floor — odds too short"
+      "msg": "Outcome probability is below the minimum floor \u2014 odds too short"
     },
     {
       "code": 6300,
@@ -10766,7 +10754,7 @@
     {
       "code": 6307,
       "name": "InvalidOracleSignature",
-      "msg": "Invalid oracle signature — transaction must be signed by the oracle key"
+      "msg": "Invalid oracle signature \u2014 transaction must be signed by the oracle key"
     },
     {
       "code": 6400,
@@ -10916,7 +10904,7 @@
     {
       "code": 6716,
       "name": "SlipPartiallyVoided",
-      "msg": "Bet slip has a voided leg — refunding stake"
+      "msg": "Bet slip has a voided leg \u2014 refunding stake"
     },
     {
       "code": 6717,
@@ -11001,7 +10989,7 @@
     {
       "code": 6800,
       "name": "EpochNotComplete",
-      "msg": "Epoch has not completed — not all markets are settled"
+      "msg": "Epoch has not completed \u2014 not all markets are settled"
     },
     {
       "code": 6801,
@@ -11011,7 +10999,7 @@
     {
       "code": 6802,
       "name": "EpochPaused",
-      "msg": "Epoch is paused — no deposits or withdrawals allowed"
+      "msg": "Epoch is paused \u2014 no deposits or withdrawals allowed"
     },
     {
       "code": 6803,
@@ -11026,12 +11014,12 @@
     {
       "code": 6805,
       "name": "NoActiveEpoch",
-      "msg": "No active epoch — call init_epoch first"
+      "msg": "No active epoch \u2014 call init_epoch first"
     },
     {
       "code": 6806,
       "name": "NotPaused",
-      "msg": "Bet is not refundable — protocol is not paused"
+      "msg": "Bet is not refundable \u2014 protocol is not paused"
     }
   ],
   "types": [
@@ -11256,7 +11244,7 @@
       "name": "DisputeStatus",
       "docs": [
         "Lifecycle of an oracle-proposed result.",
-        "No public challengers — admin can override within the challenge window."
+        "No public challengers \u2014 admin can override within the challenge window."
       ],
       "type": {
         "kind": "enum",
@@ -11276,7 +11264,7 @@
     {
       "name": "Epoch",
       "docs": [
-        "Tracks the state of an epoch — a time-bounded period during which",
+        "Tracks the state of an epoch \u2014 a time-bounded period during which",
         "markets are created and settled. LPs can only withdraw after their",
         "epoch's markets have all settled."
       ],
@@ -11402,18 +11390,6 @@
           },
           {
             "name": "min_first_liquidity",
-            "type": "u64"
-          },
-          {
-            "name": "slip_house_margin_bps",
-            "type": "u64"
-          },
-          {
-            "name": "max_slip_bonus_multiplier_bps",
-            "type": "u64"
-          },
-          {
-            "name": "next_slip_id",
             "type": "u64"
           },
           {
@@ -11948,11 +11924,11 @@
       "docs": [
         "Controls whether LMSR share trading is exposed directly to users.",
         "",
-        "`FixedOdds` — LMSR is an internal pricing engine only. Users interact via",
+        "`FixedOdds` \u2014 LMSR is an internal pricing engine only. Users interact via",
         "`place_slip` / `cash_out_slip`. Direct `buy_shares` / `sell_shares` calls",
         "are rejected. This is the default for sports markets.",
         "",
-        "`Trading` — LMSR is fully exposed. `buy_shares` / `sell_shares` are",
+        "`Trading` \u2014 LMSR is fully exposed. `buy_shares` / `sell_shares` are",
         "permitted. Intended for prediction markets, not sports."
       ],
       "type": {
