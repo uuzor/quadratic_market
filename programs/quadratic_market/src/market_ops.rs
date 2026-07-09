@@ -1,7 +1,8 @@
 use crate::constants::{
-    seeds, BASE_MINT_DECIMALS, MAX_DESCRIPTION_LEN, MAX_OUTCOMES, MAX_TITLE_LEN,
+    seeds, BASE_MINT_DECIMALS, MAX_DESCRIPTION_LEN, MAX_OUTCOMES, MAX_TITLE_LEN, SCALE,
 };
 use crate::errors::QuadraticMarketError;
+use crate::math::lmsr;
 use crate::state::{Epoch, GlobalConfig, Market, MarketMode, MarketStatus};
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
@@ -82,11 +83,35 @@ pub fn create_market_handler(
         QuadraticMarketError::InvalidAmount
     );
 
+    let lmsr_b = lmsr_b_override.unwrap_or(config.lmsr_default_b);
+
+    // Validate initial_q_values if provided — reject absurd prices that could
+    // hand free arb to the first bettor. Reject any outcome whose implied LMSR
+    // price falls outside [1%, 99%]. This guards against bot/API bugs seeding
+    // markets at near-certainty prices (0% or 100%).
     if let Some(ref q_vals) = initial_q_values {
         require!(
             q_vals.len() == num_outcomes as usize,
             QuadraticMarketError::InvalidOutcomeId
         );
+
+        // Convert to array for lmsr_price
+        let mut q_array = [0u64; MAX_OUTCOMES];
+        for i in 0..num_outcomes as usize {
+            q_array[i] = q_vals[i];
+        }
+
+        // Bounds: 1% (0.01 * SCALE) to 99% (0.99 * SCALE)
+        let min_price = SCALE / 100; // 1%
+        let max_price = (SCALE * 99) / 100; // 99%
+
+        for outcome_id in 0..num_outcomes {
+            let price = lmsr::lmsr_price(&q_array, num_outcomes, outcome_id, lmsr_b)?;
+            require!(
+                price >= min_price && price <= max_price,
+                QuadraticMarketError::InvalidAmount
+            );
+        }
     }
 
     let current_epoch_id = config.current_epoch;
@@ -109,7 +134,7 @@ pub fn create_market_handler(
     market.settlement_time = 0;
     market.winning_outcome = 0;
     market.outcome_mints = [Pubkey::default(); MAX_OUTCOMES];
-    market.lmsr_b = lmsr_b_override.unwrap_or(config.lmsr_default_b);
+    market.lmsr_b = lmsr_b;
     market.title = title;
     market.description = description;
     market.category = category;
