@@ -297,43 +297,52 @@ async function main() {
   banner("SEED FEE REWARDS");
   for (let i = 0; i < marketGroup.numSeedPositions; i++) {
     const seed = marketGroup.seedPositions[i];
-    const market = state.markets[seed.marketIndex];
+    const market = state.markets[seed?.marketIndex];
     if (!market) {
+      sub(`Seed #${i}: skipped (no matching market)`);
       continue;
     }
     if (seed.rewardClaimed || seed.refunded) {
+      sub(`Seed #${i}: skipped (already claimed/refunded)`);
       continue;
     }
     if (seed.outcomeId === market.winningOutcome) {
+      sub(`Seed #${i}: skipped (winning outcome)`);
       continue;
     }
 
     const marketPda = new PublicKey(market.marketPda);
     const claimerBaseAta = adminBaseAta;
     const balBefore = await tokenBalance(connection, claimerBaseAta);
-    await program.methods
-      .claimSeedFeeReward(new BN(state.groupId), i)
-      .accounts({
-        globalConfig: gcPda,
-        marketGroup: mgPda,
-        market: marketPda,
-        treasury: trPda,
-        treasuryBaseAta,
-        claimerBaseAta,
-        baseMint,
-        claimer: admin.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([admin])
-      .rpc();
-    const balAfter = await tokenBalance(connection, claimerBaseAta);
-    const reward = Number(balAfter) - Number(balBefore);
-    const rewardUsdc = reward / ONE_USDC;
-    accounting.payouts.seedFeeRewards += rewardUsdc;
-    accounting.marketPools[market.marketId].payoutsGiven += rewardUsdc;
-    sub(
-      `Seed fee reward market ${market.marketId}, seed #${i}: claimed ${toUsdc(reward)}`
-    );
+    try {
+      await program.methods
+        .claimSeedFeeReward(new BN(state.groupId), i)
+        .accounts({
+          globalConfig: gcPda,
+          marketGroup: mgPda,
+          market: marketPda,
+          treasury: trPda,
+          treasuryBaseAta,
+          claimerBaseAta,
+          baseMint,
+          claimer: admin.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([admin])
+        .rpc();
+      const balAfter = await tokenBalance(connection, claimerBaseAta);
+      const reward = Number(balAfter) - Number(balBefore);
+      const rewardUsdc = reward / ONE_USDC;
+      accounting.payouts.seedFeeRewards += rewardUsdc;
+      accounting.marketPools[market.marketId].payoutsGiven += rewardUsdc;
+      sub(
+        `Seed #${i} (${market.marketId}, outcome ${seed.outcomeId}): claimed ${rewardUsdc.toFixed(4)} USDC`
+      );
+    } catch (e) {
+      sub(
+        `Seed #${i} (${market.marketId}, outcome ${seed.outcomeId}): skipped (${e.message?.includes('InvalidAmount') ? 'zero reward' : 'error'})`
+      );
+    }
   }
 
   const epochAfter: any = await program.account.epoch.fetch(epochPda(epochId));

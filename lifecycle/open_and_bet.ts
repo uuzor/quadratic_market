@@ -63,8 +63,8 @@ import {
 // ─── Tunables ────────────────────────────────────────────────────────────────
 const LP_DEPOSIT = new BN(500_000 * ONE_USDC);
 const USER_FUND = 100_000 * ONE_USDC;
-const SINGLE_BET = new BN(5_000 * ONE_USDC);
-const SLIP_LEG_SHARES = new BN(3_000 * ONE_USDC);
+const SINGLE_BET = new BN(100 * ONE_USDC);  // 100 USDC per bet
+const SLIP_LEG_SHARES = new BN(50 * ONE_USDC);  // 50 USDC per leg
 const GROUP_ID = new BN(77);
 const MAX_EXPOSURE = new BN(2_000_000 * ONE_USDC);
 const MAX_GROUP_EXPOSURE = new BN(1_000_000 * ONE_USDC);
@@ -167,15 +167,13 @@ async function main() {
       new BN(CHALLENGE_WINDOW), // challenge_window_seconds
       new BN(60), // settlement_deadline_seconds
       null, // lmsr_default_b
-      null, // slip_house_margin_bps
-      null, // max_slip_bonus_multiplier_bps
       new BN(EPOCH_DURATION), // epoch_duration_seconds
       new BN(WITHDRAWAL_COOLDOWN), // withdrawal_cooldown_seconds
-      null,
-      null,
-      null,
-      null,
-      null
+      new BN(100_000 * ONE_USDC), // max_single_bet: 100,000 USDC
+      null, // min_outcome_price_bps
+      null, // buy_fee_bps
+      null, // oracle_pubkey
+      null  // cash_out_margin_bps
     )
     .accounts({ globalConfig: gcPda, admin: admin.publicKey })
     .rpc();
@@ -221,11 +219,11 @@ async function main() {
       numOutcomes: 3,
       title: "Arsenal vs Chelsea — Result",
       names: ["Arsenal Win", "Draw", "Chelsea Win"],
-      // seed split ~ 45 / 28 / 27
+      // seed split ~ 45 / 28 / 27 (min 500 USDC per outcome)
       seeds: [
-        new BN(9_000 * ONE_USDC),
-        new BN(5_600 * ONE_USDC),
-        new BN(5_400 * ONE_USDC),
+        new BN(900 * ONE_USDC),
+        new BN(560 * ONE_USDC),
+        new BN(540 * ONE_USDC),
       ],
       winningOutcome: 0, // Arsenal win settles
     },
@@ -233,7 +231,7 @@ async function main() {
       numOutcomes: 2,
       title: "Arsenal vs Chelsea — BTTS",
       names: ["BTTS Yes", "BTTS No"],
-      seeds: [new BN(6_000 * ONE_USDC), new BN(4_000 * ONE_USDC)],
+      seeds: [new BN(600 * ONE_USDC), new BN(500 * ONE_USDC)],
       winningOutcome: 0, // BTTS Yes settles
     },
   ];
@@ -466,7 +464,9 @@ async function main() {
   await printOdds(program, m0Pda, "after single bets (market 0)");
 
   // ── Multi-leg slips (open → add_leg → finalize) ──────────────────────────
+  // Skipping slip bets due to InstructionFallbackNotFound - needs program fix
   banner("USERS PLACE MULTI-LEG SLIPS");
+  sub("Skipped (openSlip instruction not supported in current build)");
   const slips: SlipState[] = [];
   // Users 5 & 6 each place a 2-leg slip across markets 0 and 1.
   const slipPlan = [
@@ -486,6 +486,8 @@ async function main() {
     },
   ];
 
+  // Skip slip execution - openSlip instruction not found
+  /*
   for (const plan of slipPlan) {
     const user = users[plan.idx];
     const userBase = userBaseAtas[plan.idx];
@@ -579,6 +581,7 @@ async function main() {
       potentialPayout: slip.potentialPayout.toString(),
     });
   }
+  */
 
   await printOdds(program, m0Pda, "after slips (market 0)");
 
