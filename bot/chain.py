@@ -23,9 +23,9 @@ log = structlog.get_logger(__name__)
 
 SEED_GLOBAL_CONFIG = b"global_config"
 SEED_TREASURY = b"treasury"
+SEED_LP_MINT = b"lp_mint"
 SEED_MARKET = b"market"
-SEED_OUTCOME_MINT = b"outcome_mint"
-SEED_DISPUTE = b"dispute"
+SEED_MARKET_GROUP = b"market_group"
 SEED_EPOCH = b"epoch"
 
 
@@ -110,6 +110,10 @@ def treasury_pda(program_id: Pubkey) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address([SEED_TREASURY], program_id)
 
 
+def lp_mint_pda(program_id: Pubkey) -> tuple[Pubkey, int]:
+    return Pubkey.find_program_address([SEED_LP_MINT], program_id)
+
+
 def market_pda(program_id: Pubkey, market_id: int) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address(
         [SEED_MARKET, market_id.to_bytes(8, "little")],
@@ -117,16 +121,9 @@ def market_pda(program_id: Pubkey, market_id: int) -> tuple[Pubkey, int]:
     )
 
 
-def outcome_mint_pda(program_id: Pubkey, market_id: int, outcome_id: int) -> tuple[Pubkey, int]:
+def market_group_pda(program_id: Pubkey, group_id: int) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address(
-        [SEED_OUTCOME_MINT, market_id.to_bytes(8, "little"), bytes([outcome_id])],
-        program_id,
-    )
-
-
-def dispute_pda(program_id: Pubkey, market_id: int) -> tuple[Pubkey, int]:
-    return Pubkey.find_program_address(
-        [SEED_DISPUTE, market_id.to_bytes(8, "little")],
+        [SEED_MARKET_GROUP, group_id.to_bytes(8, "little")],
         program_id,
     )
 
@@ -162,6 +159,7 @@ class ChainClient:
 
         self.global_config, _ = global_config_pda(self.program_id)
         self.treasury, _ = treasury_pda(self.program_id)
+        self.lp_mint, _ = lp_mint_pda(self.program_id)
 
     @classmethod
     async def create(
@@ -192,6 +190,10 @@ class ChainClient:
         pda, _ = market_pda(self.program_id, market_id)
         return await self.program.account["Market"].fetch(pda)
 
+    async def fetch_market_group(self, group_id: int) -> dict:
+        pda, _ = market_group_pda(self.program_id, group_id)
+        return await self.program.account["MarketGroup"].fetch(pda)
+
     async def fetch_epoch(self, epoch_id: int) -> dict:
         pda, _ = epoch_pda(self.program_id, epoch_id)
         return await self.program.account["Epoch"].fetch(pda)
@@ -200,34 +202,116 @@ class ChainClient:
         cfg = await self.fetch_global_config()
         return int(cfg.next_market_id)
 
-    # ── init_epoch ──────────────────────────────────────────────────────────
+    # ── Market Group operations ─────────────────────────────────────────────────
 
-    async def init_epoch(self) -> str:
+    async def create_market_group(self, group_id: int, description: str = "") -> tuple[int, str]:
         """
-        Initialize the current epoch if it doesn't exist.
-        Called before creating markets to ensure epoch account exists.
-        """
-        cfg = await self.fetch_global_config()
-        epoch_id = int(cfg.current_epoch)
-        epoch_pda, _ = epoch_pda(self.program_id, epoch_id)
-
-        from solders.sysvar import CLOCK as SYSVAR_CLOCK
+        Create a new market group for organizing related markets (e.g., same fixture).
         
-        sig = await self.program.rpc["init_epoch"](
+        Args:
+            group_id: Unique identifier for the group
+            description: Optional description
+            
+        Returns:
+            (group_id, tx_signature)
+        """
+        mg_pda, _ = market_group_pda(self.program_id, group_id)
+
+        sig = await self.program.rpc["create_market_group"](
+            group_id,
+            description,
             ctx=Context(
                 accounts={
                     "global_config": self.global_config,
-                    "epoch": epoch_pda,
-                    "payer": self.operator_kp.pubkey(),
+                    "market_group": mg_pda,
+                    "authority": self.operator_kp.pubkey(),
                     "system_program": SYS_PROGRAM_ID,
                 },
                 signers=[self.operator_kp],
             ),
         )
-        log.info("init_epoch", epoch_id=epoch_id, sig=str(sig))
+        log.info("create_market_group", group_id=group_id, sig=str(sig))
+        return group_id, str(sig)
+
+    async def add_market_to_group(
+        self,
+        group_id: int,
+        market_id: int,
+        outcome_ids: list[int],
+    ) -> str:
+        """
+        Add a market to an existing market group.
+        
+        Args:
+            group_id: The market group ID
+            market_id: The market to add
+            outcome_ids: Which outcomes are part of this market group
+            
+        Returns:
+            tx_signature
+        """
+        mg_pda, _ = market_group_pda(self.program_id, group_id)
+        mkt_pda, _ = market_pda(self.program_id, market_id)
+
+        sig = await self.program.rpc["add_market_to_group"](
+            group_id,
+            market_id,
+            outcome_ids,
+            ctx=Context(
+                accounts={
+                    "global_config": self.global_config,
+                    "market_group": mg_pda,
+                    "market": mkt_pda,
+                    "authority": self.operator_kp.pubkey(),
+                },
+                signers=[self.operator_kp],
+            ),
+        )
+        log.info("add_market_to_group", group_id=group_id, market_id=market_id, sig=str(sig))
         return str(sig)
 
-    # ── create_market ─────────────────────────────────────────────────────────
+    async def activate_seeded_market(
+        self,
+        group_id: int,
+        market_id: int,
+        seed_amount: int,
+        outcome_id: int,
+    ) -> str:
+        """
+        Seed a market with initial liquidity for a specific outcome.
+        
+        Args:
+            group_id: The market group ID
+            market_id: The market to seed
+            seed_amount: Amount to seed (in base mint units)
+            outcome_id: Which outcome to seed
+            
+        Returns:
+            tx_signature
+        """
+        mg_pda, _ = market_group_pda(self.program_id, group_id)
+        mkt_pda, _ = market_pda(self.program_id, market_id)
+
+        sig = await self.program.rpc["activate_seeded_market"](
+            group_id,
+            market_id,
+            seed_amount,
+            outcome_id,
+            ctx=Context(
+                accounts={
+                    "global_config": self.global_config,
+                    "market_group": mg_pda,
+                    "market": mkt_pda,
+                    "authority": self.operator_kp.pubkey(),
+                },
+                signers=[self.operator_kp],
+            ),
+        )
+        log.info("activate_seeded_market", group_id=group_id, market_id=market_id, 
+                 seed_amount=seed_amount, outcome_id=outcome_id, sig=str(sig))
+        return str(sig)
+
+    # ── Market operations ─────────────────────────────────────────────────────
 
     async def create_market(
         self,
@@ -243,7 +327,7 @@ class ChainClient:
         Create a market with optional initial q_values for odds seeding.
         
         Args:
-            start_time: Unix timestamp when market becomes inactive
+            start_time: Unix timestamp when market starts
             num_outcomes: 2 or 3
             title: Market title (e.g., "Arsenal vs Liverpool - Match Result")
             description: Market description
@@ -255,21 +339,9 @@ class ChainClient:
         Returns:
             (market_id, tx_signature)
         """
-        # Ensure epoch exists
-        await self.init_epoch()
-        
         mid = await self.next_market_id()
         mkt_pda, _ = market_pda(self.program_id, mid)
         cfg = await self.fetch_global_config()
-        current_epoch = int(cfg.current_epoch)
-        epoch_pda, epoch_bump = epoch_pda(self.program_id, current_epoch)
-
-        # Convert initial_q_values to anchorpy expected format
-        q_values_arg = initial_q_values if initial_q_values else None
-
-        # Import MarketMode
-        from anchorpy.serializer import Serde
-        MarketMode = self.program.type["MarketMode"]
 
         sig = await self.program.rpc["create_market"](
             start_time,
@@ -278,13 +350,11 @@ class ChainClient:
             description,
             category,
             lmsr_b_override,
-            q_values_arg,
-            MarketMode.FixedOdds,  # Use FixedOdds mode for sports
+            initial_q_values,
             ctx=Context(
                 accounts={
                     "global_config": self.global_config,
                     "market": mkt_pda,
-                    "epoch": epoch_pda,
                     "authority": self.operator_kp.pubkey(),
                     "system_program": SYS_PROGRAM_ID,
                     "rent": Pubkey.from_string("SysvarRent111111111111111111111111111111111"),
@@ -302,36 +372,6 @@ class ChainClient:
             sig=str(sig),
         )
         return mid, str(sig)
-
-    # ── init_outcome_mint ─────────────────────────────────────────────────────
-
-    async def init_outcome_mint(self, market_id: int, outcome_id: int) -> str:
-        mkt_pda, _ = market_pda(self.program_id, market_id)
-        mint_pda, _ = outcome_mint_pda(self.program_id, market_id, outcome_id)
-
-        from solders.sysvar import RENT as SYSVAR_RENT
-        from spl.token.constants import TOKEN_PROGRAM_ID
-
-        sig = await self.program.rpc["init_outcome_mint"](
-            market_id,
-            outcome_id,
-            ctx=Context(
-                accounts={
-                    "global_config": self.global_config,
-                    "market": mkt_pda,
-                    "outcome_mint": mint_pda,
-                    "payer": self.operator_kp.pubkey(),
-                    "token_program": Pubkey.from_string(str(TOKEN_PROGRAM_ID)),
-                    "system_program": SYS_PROGRAM_ID,
-                    "rent": SYSVAR_RENT,
-                },
-                signers=[self.operator_kp],
-            ),
-        )
-        log.info("init_outcome_mint", market_id=market_id, outcome_id=outcome_id, sig=str(sig))
-        return str(sig)
-
-    # ── suspend_market ────────────────────────────────────────────────────────
 
     async def suspend_market(self, market_id: int) -> str:
         """
@@ -352,61 +392,44 @@ class ChainClient:
         log.info("suspend_market", market_id=market_id, sig=str(sig))
         return str(sig)
 
-    # ── propose_result ────────────────────────────────────────────────────────
-
-    async def propose_result(self, market_id: int, winning_outcome: int) -> str:
+    async def resume_market(self, market_id: int) -> str:
         """
-        Oracle proposes the result. Called after RESULT_DELAY_SECONDS post start_time.
-        winning_outcome: 0=Home, 1=Away (or 0=Home, 1=Draw, 2=Away for 3-way).
+        Resume a suspended market (if betting should reopen).
         """
         mkt_pda, _ = market_pda(self.program_id, market_id)
-        dp_pda, _ = dispute_pda(self.program_id, market_id)
-
-        sig = await self.program.rpc["propose_result"](
-            market_id,
-            winning_outcome,
+        sig = await self.program.rpc["resume_market"](
             ctx=Context(
                 accounts={
                     "global_config": self.global_config,
                     "market": mkt_pda,
-                    "dispute": dp_pda,
-                    "oracle": self.oracle_kp.pubkey(),
-                    "system_program": SYS_PROGRAM_ID,
-                },
-                signers=[self.oracle_kp],
-            ),
-        )
-        log.info("propose_result", market_id=market_id, outcome=winning_outcome, sig=str(sig))
-        return str(sig)
-
-    # ── finalize_result ───────────────────────────────────────────────────────
-
-    async def finalize_result(self, market_id: int) -> str:
-        """
-        Finalize after the challenge window. Callable by anyone — bot uses operator key.
-        """
-        mkt_pda, _ = market_pda(self.program_id, market_id)
-        dp_pda, _ = dispute_pda(self.program_id, market_id)
-
-        sig = await self.program.rpc["finalize_result"](
-            market_id,
-            ctx=Context(
-                accounts={
-                    "global_config": self.global_config,
-                    "market": mkt_pda,
-                    "dispute": dp_pda,
-                    "caller": self.operator_kp.pubkey(),
+                    "authority": self.operator_kp.pubkey(),
                 },
                 signers=[self.operator_kp],
             ),
         )
-        log.info("finalize_result", market_id=market_id, sig=str(sig))
+        log.info("resume_market", market_id=market_id, sig=str(sig))
         return str(sig)
 
-    # ── void_if_expired ───────────────────────────────────────────────────────
+    async def void_market(self, market_id: int) -> str:
+        """
+        Void a market (admin action) — refunds all positions.
+        """
+        mkt_pda, _ = market_pda(self.program_id, market_id)
+        sig = await self.program.rpc["void_market"](
+            ctx=Context(
+                accounts={
+                    "global_config": self.global_config,
+                    "market": mkt_pda,
+                    "authority": self.oracle_kp.pubkey(),
+                },
+                signers=[self.oracle_kp],
+            ),
+        )
+        log.info("void_market", market_id=market_id, sig=str(sig))
+        return str(sig)
 
     async def void_if_expired(self, market_id: int) -> str:
-        """Void a market that the oracle never settled within the deadline."""
+        """Void a market that exceeded the settlement deadline."""
         mkt_pda, _ = market_pda(self.program_id, market_id)
         sig = await self.program.rpc["void_if_expired"](
             ctx=Context(
@@ -419,3 +442,145 @@ class ChainClient:
         )
         log.info("void_if_expired", market_id=market_id, sig=str(sig))
         return str(sig)
+
+    # ── Settlement ────────────────────────────────────────────────────────────
+
+    async def admin_override(self, market_id: int, winning_outcome: int) -> str:
+        """
+        Admin override to set the winning outcome directly.
+        Used when the oracle is unavailable or for testing.
+        """
+        mkt_pda, _ = market_pda(self.program_id, market_id)
+        sig = await self.program.rpc["admin_override"](
+            market_id,
+            winning_outcome,
+            ctx=Context(
+                accounts={
+                    "global_config": self.global_config,
+                    "market": mkt_pda,
+                    "authority": self.oracle_kp.pubkey(),
+                },
+                signers=[self.oracle_kp],
+            ),
+        )
+        log.info("admin_override", market_id=market_id, outcome=winning_outcome, sig=str(sig))
+        return str(sig)
+
+    async def finalize_result(self, market_id: int) -> str:
+        """
+        Finalize after the challenge window. Callable by anyone — bot uses operator key.
+        """
+        mkt_pda, _ = market_pda(self.program_id, market_id)
+
+        sig = await self.program.rpc["finalize_result"](
+            market_id,
+            ctx=Context(
+                accounts={
+                    "global_config": self.global_config,
+                    "market": mkt_pda,
+                    "caller": self.operator_kp.pubkey(),
+                },
+                signers=[self.operator_kp],
+            ),
+        )
+        log.info("finalize_result", market_id=market_id, sig=str(sig))
+        return str(sig)
+
+    # ── Liquidity operations ──────────────────────────────────────────────────
+
+    async def add_liquidity(self, amount: int) -> str:
+        """
+        Add liquidity to the protocol.
+        
+        Args:
+            amount: Amount of base tokens to add
+            
+        Returns:
+            tx_signature
+        """
+        sig = await self.program.rpc["add_liquidity"](
+            amount,
+            ctx=Context(
+                accounts={
+                    "global_config": self.global_config,
+                    "treasury": self.treasury,
+                    "authority": self.operator_kp.pubkey(),
+                },
+                signers=[self.operator_kp],
+            ),
+        )
+        log.info("add_liquidity", amount=amount, sig=str(sig))
+        return str(sig)
+
+    # ── Config operations ─────────────────────────────────────────────────────
+
+    async def update_config(
+        self,
+        max_market_exposure: int | None = None,
+        challenge_window_seconds: int | None = None,
+        settlement_deadline_seconds: int | None = None,
+        lmsr_default_b: int | None = None,
+        epoch_duration_seconds: int | None = None,
+        withdrawal_cooldown_seconds: int | None = None,
+        max_single_bet: int | None = None,
+        min_outcome_price_bps: int | None = None,
+        buy_fee_bps: int | None = None,
+        oracle_pubkey: bytes | None = None,
+        cash_out_margin_bps: int | None = None,
+    ) -> str:
+        """
+        Update global configuration parameters.
+        """
+        sig = await self.program.rpc["update_config"](
+            max_market_exposure,
+            challenge_window_seconds,
+            settlement_deadline_seconds,
+            lmsr_default_b,
+            epoch_duration_seconds,
+            withdrawal_cooldown_seconds,
+            max_single_bet,
+            min_outcome_price_bps,
+            buy_fee_bps,
+            oracle_pubkey,
+            cash_out_margin_bps,
+            ctx=Context(
+                accounts={
+                    "global_config": self.global_config,
+                    "admin": self.operator_kp.pubkey(),
+                },
+                signers=[self.operator_kp],
+            ),
+        )
+        log.info("update_config", sig=str(sig))
+        return str(sig)
+
+    # ── Market info helpers ───────────────────────────────────────────────────
+
+    def get_market_status(self, market_data: dict) -> str:
+        """Get human-readable market status."""
+        status = market_data.get("status", {})
+        if "open" in status:
+            return "open"
+        elif "suspended" in status:
+            return "suspended"
+        elif "proposed" in status:
+            return "proposed"
+        elif "settled" in status:
+            return "settled"
+        elif "voided" in status:
+            return "voided"
+        return "unknown"
+
+    def get_market_info(self, market_data: dict) -> dict:
+        """Extract key info from market data."""
+        return {
+            "status": self.get_market_status(market_data),
+            "market_id": int(market_data.get("market_id", 0)),
+            "start_time": int(market_data.get("start_time", 0)),
+            "num_outcomes": int(market_data.get("num_outcomes", 0)),
+            "title": market_data.get("title", ""),
+            "description": market_data.get("description", ""),
+            "winning_outcome": market_data.get("winning_outcome"),
+            "total_exposure": market_data.get("total_exposure", 0),
+            "pool_size": market_data.get("pool_size", 0),
+        }

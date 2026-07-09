@@ -2,11 +2,11 @@
 Quadratic Market sports bot for football markets.
 
 Lifecycle per fixture:
-  1. [create_markets]   Fetch upcoming fixtures → create multiple market types
-                        per fixture with odds-seeded q_values
+  1. [create_markets]   Fetch upcoming fixtures → create market groups and markets
+                        with odds-seeded q_values
   2. [suspend_markets]  At start_time → suspend_market (no more bets)
   3. [settle_markets]   After start_time + RESULT_DELAY_SECONDS → fetch score
-                        → propose_result (oracle signs)
+                        → admin_override (oracle/admin signs)
   4. [finalize_markets] After challenge window → finalize_result
   5. [void_expired]     If oracle never settled → void_if_expired
 
@@ -28,13 +28,14 @@ import asyncio
 import sys
 import time
 import argparse
+import json
 from pathlib import Path
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import config
-from chain import ChainClient, load_keypair
+from chain import ChainClient, load_keypair, market_pda
 from odds_converter import decimal_odds_to_q_values, MarketType, FOOTBALL_MARKET_TYPES
 from sports_api import OddsApiClient, Fixture, MarketOdds
 from state import BotState, TrackedMarket, MarketStage
@@ -49,7 +50,7 @@ structlog.configure(
 log = structlog.get_logger(__name__)
 
 # Path to the compiled IDL (built by `anchor build`)
-IDL_PATH = Path(__file__).parent.parent / "target" / "idl" / "quadratic_market.json"
+IDL_PATH = Path(__file__).parent / "idl.json"
 
 
 # ─── Market type mapping ──────────────────────────────────────────────────────
@@ -70,9 +71,57 @@ MARKET_CATEGORY_TO_OUTCOMES = {
 
 # ─── Bot tasks ────────────────────────────────────────────────────────────────
 
+async def task_sync_onchain_markets(chain: ChainClient, state: BotState) -> None:
+    """
+    Sync market state from on-chain data.
+    This catches any markets that were created or updated directly on-chain.
+    """
+    try:
+        cfg = await chain.fetch_global_config()
+        next_market_id = int(cfg.next_market_id)
+        
+        # Scan through all market IDs (up to 100 for safety)
+        for market_id in range(max(1, next_market_id - 100), next_market_id):
+            if state.is_market_id_tracked(market_id):
+                continue
+            
+            try:
+                market_data = await chain.fetch_market(market_id)
+                status = chain.get_market_status(market_data)
+                market_info = chain.get_market_info(market_data)
+                
+                # Try to find matching fixture in state or create placeholder
+                event_id = f"chain_{market_id}"
+                
+                # Add to tracking if market is active
+                if status in ("open", "suspended"):
+                    state.add_from_chain(
+                        market_id=market_id,
+                        event_id=event_id,
+                        market_data={
+                            "sport_key": "unknown",
+                            "category": 0,
+                            "num_outcomes": market_info["num_outcomes"],
+                            "start_time": market_info["start_time"],
+                            "home_team": market_info["title"].split(" vs ")[0] if " vs " in market_info["title"] else "Unknown",
+                            "away_team": market_info["title"].split(" vs ")[1] if " vs " in market_info["title"] else "Unknown",
+                            "challenge_window": 60,
+                            "settlement_deadline": 7200,
+                        }
+                    )
+                    log.info("synced_onchain_market", market_id=market_id, status=status)
+                    
+            except Exception as e:
+                # Market doesn't exist or error reading
+                pass
+                
+    except Exception as exc:
+        log.error("sync_onchain_markets_failed", error=str(exc))
+
+
 async def task_create_markets(chain: ChainClient, api: OddsApiClient, state: BotState) -> None:
     """
-    Fetch upcoming fixtures and create multiple market types per fixture.
+    Fetch upcoming fixtures and create market groups and markets.
     Each market is seeded with q_values derived from API odds.
     """
     fixtures = await api.upcoming_fixtures(config.MARKET_LOOKAHEAD_SECONDS)
@@ -80,6 +129,15 @@ async def task_create_markets(chain: ChainClient, api: OddsApiClient, state: Bot
     for fix in fixtures:
         if state.is_tracked(fix.event_id):
             continue
+
+        # Create a market group for this fixture
+        group_id = hash(fix.event_id) % (2**63)  # Generate deterministic group ID
+        try:
+            await chain.create_market_group(group_id, f"{fix.home_team} vs {fix.away_team}")
+            log.info("market_group_created", event_id=fix.event_id, group_id=group_id)
+        except Exception as exc:
+            # Group might already exist
+            log.debug("market_group_exists", event_id=fix.event_id, error=str(exc))
 
         # Create multiple market types per fixture
         markets_created = []
@@ -126,6 +184,17 @@ async def task_create_markets(chain: ChainClient, api: OddsApiClient, state: Bot
                     category=market_type.category,
                     initial_q_values=q_values,
                 )
+                
+                # Add market to group
+                try:
+                    await chain.add_market_to_group(
+                        group_id=group_id,
+                        market_id=market_id,
+                        outcome_ids=list(range(num_outcomes)),
+                    )
+                except Exception as e:
+                    log.warning("add_market_to_group_failed", market_id=market_id, error=str(e))
+                
                 markets_created.append({
                     "market_id": market_id,
                     "category": market_type.category,
@@ -153,33 +222,28 @@ async def task_create_markets(chain: ChainClient, api: OddsApiClient, state: Bot
                 primary_category=markets_created[0]["category"],
                 num_outcomes=markets_created[0]["num_outcomes"],
                 start_time=fix.start_time,
-                stage=MarketStage.CREATED,
+                stage=MarketStage.MINTS_INIT,  # Assume mints are init
                 home_team=home,
                 away_team=away,
                 sub_markets=markets_created,  # All markets for this fixture
+                league=fix.sport_key,
             ))
-
-    # Initialize outcome mints for markets in CREATED stage
-    for m in state.all_in_stage(MarketStage.CREATED):
-        try:
-            # Initialize all sub-markets
-            for sub in (m.sub_markets or []):
-                for oid in range(sub["num_outcomes"]):
-                    await chain.init_outcome_mint(sub["market_id"], oid)
-            state.advance(m.event_id, MarketStage.MINTS_INIT)
-        except Exception as exc:
-            log.error("init_mints_failed", market_id=m.market_id, error=str(exc))
 
 
 async def task_suspend_markets(chain: ChainClient, state: BotState) -> None:
     """
     Suspend markets whose start_time has passed — closes betting.
-    Suspends all sub-markets for each fixture.
+    Uses the smarter timing from state.py.
     """
     now = int(time.time())
-    for m in state.all_in_stage(MarketStage.MINTS_INIT):
-        if now < m.start_time:
-            continue
+    markets_to_suspend = state.get_markets_needing_suspend(now)
+    
+    if not markets_to_suspend:
+        return
+        
+    log.info("suspending_markets", count=len(markets_to_suspend))
+    
+    for m in markets_to_suspend:
         try:
             # Suspend primary market
             await chain.suspend_market(m.market_id)
@@ -188,31 +252,33 @@ async def task_suspend_markets(chain: ChainClient, state: BotState) -> None:
             if m.sub_markets:
                 for sub in m.sub_markets:
                     if sub["market_id"] != m.market_id:
-                        await chain.suspend_market(sub["market_id"])
+                        try:
+                            await chain.suspend_market(sub["market_id"])
+                        except Exception as e:
+                            log.warning("suspend_sub_market_failed", sub_market_id=sub["market_id"], error=str(e))
             
             state.advance(m.event_id, MarketStage.SUSPENDED)
+            log.info("market_suspended", event_id=m.event_id, market_id=m.market_id)
         except Exception as exc:
             log.error("suspend_failed", market_id=m.market_id, error=str(exc))
 
 
 async def task_settle_markets(chain: ChainClient, api: OddsApiClient, state: BotState) -> None:
     """
-    For suspended markets past the result delay, fetch the score and propose result.
-    Settles all sub-markets based on the fixture result.
+    For suspended markets past the result delay, fetch the score and settle.
+    Uses admin_override for direct settlement (simpler than propose+finalize).
     """
     now = int(time.time())
-    settle_threshold = now - config.RESULT_DELAY_SECONDS
-
-    pending = [
-        m for m in state.all_in_stage(MarketStage.SUSPENDED)
-        if m.start_time <= settle_threshold
-    ]
-    if not pending:
+    markets_ready = state.get_markets_ready_to_propose(now)
+    
+    if not markets_ready:
         return
+
+    log.info("settling_markets", count=len(markets_ready))
 
     # Group by sport to minimise API calls
     by_sport: dict[str, list[TrackedMarket]] = {}
-    for m in pending:
+    for m in markets_ready:
         by_sport.setdefault(m.sport_key, []).append(m)
 
     for sport, markets in by_sport.items():
@@ -228,31 +294,35 @@ async def task_settle_markets(chain: ChainClient, api: OddsApiClient, state: Bot
                 continue
 
             try:
-                # Propose result for primary market
-                await chain.propose_result(m.market_id, result.winning_outcome)
+                # Use admin_override for direct settlement
+                await chain.admin_override(m.market_id, result.winning_outcome)
                 
-                # Propose result for all sub-markets
+                # Settle all sub-markets
                 if m.sub_markets:
                     for sub in m.sub_markets:
                         if sub["market_id"] != m.market_id:
-                            # Determine winning outcome for this market type
-                            sub_winning = map_winning_outcome(
-                                result.winning_outcome,
-                                m.primary_category,
-                                sub["category"],
-                                m.home_team,
-                                m.away_team,
-                            )
-                            if sub_winning is not None:
-                                await chain.propose_result(sub["market_id"], sub_winning)
+                            try:
+                                # Determine winning outcome for this market type
+                                sub_winning = map_winning_outcome(
+                                    result.winning_outcome,
+                                    m.primary_category,
+                                    sub["category"],
+                                    m.home_team,
+                                    m.away_team,
+                                )
+                                if sub_winning is not None:
+                                    await chain.admin_override(sub["market_id"], sub_winning)
+                            except Exception as e:
+                                log.warning("settle_sub_market_failed", sub_market_id=sub["market_id"], error=str(e))
                 
                 state.advance(
                     m.event_id,
                     MarketStage.PROPOSED,
                     proposed_outcome=result.winning_outcome,
                 )
+                log.info("market_settled", event_id=m.event_id, outcome=result.winning_outcome)
             except Exception as exc:
-                log.error("propose_result_failed", market_id=m.market_id, error=str(exc))
+                log.error("settle_market_failed", market_id=m.market_id, error=str(exc))
 
 
 def map_winning_outcome(
@@ -278,10 +348,7 @@ def map_winning_outcome(
       Need actual scores to determine total goals
       For now, return None (skip settlement)
     """
-    # For now, only support Match Result mapping
-    # BTTS and Totals require score data which the current API doesn't provide in settlement
     if main_category == 0:
-        # Match Result - use same outcome for primary market
         return main_winning_outcome
     elif main_category == sub_category:
         return main_winning_outcome
@@ -294,17 +361,16 @@ async def task_finalize_markets(chain: ChainClient, state: BotState) -> None:
     """
     Finalize markets that are in PROPOSED stage and past the challenge window.
     """
-    cfg = await chain.fetch_global_config()
-    challenge_window = int(cfg.challenge_window_seconds)
     now = int(time.time())
+    markets_to_finalize = state.get_markets_ready_to_finalize(now)
+    
+    if not markets_to_finalize:
+        return
+        
+    log.info("finalizing_markets", count=len(markets_to_finalize))
 
-    for m in state.all_in_stage(MarketStage.PROPOSED):
+    for m in markets_to_finalize:
         try:
-            market = await chain.fetch_market(m.market_id)
-            settlement_time = int(market.settlement_time)
-            if now < settlement_time + challenge_window:
-                continue  # window still open
-
             await chain.finalize_result(m.market_id)
             
             # Finalize all sub-markets
@@ -317,6 +383,7 @@ async def task_finalize_markets(chain: ChainClient, state: BotState) -> None:
                             log.warning("finalize_sub_market_failed", sub_market_id=sub["market_id"], error=str(e))
             
             state.advance(m.event_id, MarketStage.FINALIZED)
+            log.info("market_finalized", event_id=m.event_id, market_id=m.market_id)
         except Exception as exc:
             log.error("finalize_failed", market_id=m.market_id, error=str(exc))
 
@@ -325,13 +392,15 @@ async def task_void_expired(chain: ChainClient, state: BotState) -> None:
     """
     Void markets where the oracle never proposed a result within the deadline.
     """
-    cfg = await chain.fetch_global_config()
-    deadline_seconds = int(cfg.settlement_deadline_seconds)
     now = int(time.time())
+    expired_markets = state.get_markets_expired(now)
+    
+    if not expired_markets:
+        return
+        
+    log.info("voiding_expired_markets", count=len(expired_markets))
 
-    for m in state.all_in_stage(MarketStage.SUSPENDED):
-        if now < m.start_time + deadline_seconds:
-            continue
+    for m in expired_markets:
         try:
             await chain.void_if_expired(m.market_id)
             
@@ -345,8 +414,32 @@ async def task_void_expired(chain: ChainClient, state: BotState) -> None:
                             log.warning("void_sub_market_failed", sub_market_id=sub["market_id"], error=str(e))
             
             state.advance(m.event_id, MarketStage.VOIDED)
+            log.info("market_voided", event_id=m.event_id, market_id=m.market_id)
         except Exception as exc:
             log.error("void_expired_failed", market_id=m.market_id, error=str(exc))
+
+
+async def task_cleanup_old(state: BotState) -> None:
+    """
+    Clean up old finalized/voided markets from state.
+    """
+    removed = state.cleanup_old(max_age_days=7)
+    if removed > 0:
+        log.info("cleaned_up_old_markets", count=removed)
+
+
+async def task_status_report(state: BotState) -> None:
+    """
+    Log current status of tracked markets.
+    """
+    stats = state.get_stats()
+    log.info(
+        "market_status_report",
+        total=stats["total"],
+        by_stage=stats["by_stage"],
+        upcoming_24h=stats["upcoming_24h"],
+        past_start=stats["past_start"],
+    )
 
 
 # ─── Main loop ────────────────────────────────────────────────────────────────
@@ -354,11 +447,24 @@ async def task_void_expired(chain: ChainClient, state: BotState) -> None:
 async def run_once(chain: ChainClient, api: OddsApiClient, state: BotState) -> None:
     """Execute one full pass of all bot tasks in dependency order."""
     log.info("bot_pass_start")
+    
+    # Sync state from on-chain
+    if config.SYNC_ONCHAIN_MARKETS:
+        await task_sync_onchain_markets(chain, state)
+    
+    # Create new markets
     await task_create_markets(chain, api, state)
+    
+    # Handle market lifecycle
     await task_suspend_markets(chain, state)
     await task_settle_markets(chain, api, state)
     await task_finalize_markets(chain, state)
     await task_void_expired(chain, state)
+    
+    # Cleanup and reporting
+    await task_cleanup_old(state)
+    await task_status_report(state)
+    
     log.info("bot_pass_complete")
 
 
@@ -383,24 +489,45 @@ async def main(once: bool = False) -> None:
     state = BotState()
 
     try:
+        # Print initial status
+        stats = state.get_stats()
+        log.info(
+            "bot_initialized",
+            program_id=config.PROGRAM_ID,
+            rpc_url=config.RPC_URL,
+            tracked_markets=stats["total"],
+        )
+
         if once:
             await run_once(chain, api, state)
             return
 
         scheduler = AsyncIOScheduler()
+        
+        # Main task loop
         scheduler.add_job(
             run_once,
             "interval",
             seconds=config.POLL_INTERVAL_SECONDS,
             args=[chain, api, state],
             id="bot_pass",
-            max_instances=1,        # prevent overlapping runs
+            max_instances=1,
             coalesce=True,
         )
+        
+        # Status reporting every minute
+        scheduler.add_job(
+            task_status_report,
+            "interval",
+            seconds=60,
+            args=[state],
+            id="status_report",
+        )
+        
         scheduler.start()
         log.info("bot_started", interval_seconds=config.POLL_INTERVAL_SECONDS)
 
-        # Run immediately on startup, then on schedule
+        # Run immediately on startup
         await run_once(chain, api, state)
 
         # Keep running until interrupted
@@ -422,5 +549,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Run a single pass and exit (useful for cron jobs)",
     )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Show current market status and exit",
+    )
     args = parser.parse_args()
-    asyncio.run(main(once=args.once))
+    
+    if args.status:
+        state = BotState()
+        stats = state.get_stats()
+        print(json.dumps(stats, indent=2))
+    else:
+        asyncio.run(main(once=args.once))

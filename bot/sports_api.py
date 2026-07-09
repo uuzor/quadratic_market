@@ -1,5 +1,5 @@
 """
-Sports data client using The-Odds-API (https://the-odds-api.com).
+Sports data client using The-Odds-API (https://the-odds-api.com) and TXOdds.
 
 Free tier: 500 requests/month. The bot uses two endpoints:
   - /sports/{sport}/odds  — upcoming fixtures with odds (to create markets)
@@ -21,6 +21,8 @@ from typing import Optional
 
 import httpx
 import structlog
+
+from txodds import TxODDSClient, Fixture as TxFixture, ScoreEntry as TxScore
 
 log = structlog.get_logger(__name__)
 
@@ -46,6 +48,8 @@ class Fixture:
     start_time: int         # Unix timestamp (UTC)
     has_draw: bool          # True for soccer/3-way markets
     markets: dict[str, MarketOdds] = field(default_factory=dict)  # market_key -> MarketOdds
+    source: str = "the-odds-api"  # Source of odds data
+    league: Optional[str] = None  # League name
 
 
 @dataclass
@@ -57,6 +61,8 @@ class SettledResult:
     away_team: str
     winning_outcome: int    # 0=home, 1=draw (3-way only), 2=away (or 1 for 2-way)
     completed: bool
+    home_score: int = 0
+    away_score: int = 0
 
 
 # Sports that have a draw outcome (3-way markets)
@@ -72,13 +78,58 @@ THREE_WAY_SPORTS = {
 
 
 class OddsApiClient:
-    def __init__(self, api_key: str, sports: list[str]) -> None:
+    def __init__(self, api_key: str, sports: list[str], txodds_token: Optional[str] = None) -> None:
         self._key = api_key
         self._sports = sports
         self._http = httpx.AsyncClient(base_url=BASE_URL, timeout=15.0)
+        
+        # TXOdds client for more accurate odds (optional)
+        self._txodds: Optional[TxODDSClient] = None
+        if txodds_token:
+            try:
+                self._txodds = TxODDSClient()
+            except Exception as e:
+                log.warning("txodds_init_failed", error=str(e))
 
     async def close(self) -> None:
         await self._http.aclose()
+        if self._txodds:
+            await self._txodds.close()
+
+    # ── TXOdds integration ─────────────────────────────────────────────────────
+
+    async def _fetch_txodds_fixtures(self) -> dict[int, TxFixture]:
+        """Fetch fixtures from TXOdds."""
+        if not self._txodds:
+            return {}
+        
+        try:
+            # Start session
+            if not self._txodds.jwt:
+                await self._txodds.start_guest_session()
+            
+            fixtures = await self._txodds.get_fixtures()
+            return {f.id: f for f in fixtures}
+        except Exception as e:
+            log.warning("txodds_fetch_failed", error=str(e))
+            return {}
+
+    async def _fetch_txodds_scores(self, fixture_id: int) -> Optional[TxScore]:
+        """Fetch scores from TXOdds for a specific fixture."""
+        if not self._txodds:
+            return None
+        
+        try:
+            scores = await self._txodds.get_scores_snapshot(fixture_id)
+            if scores:
+                # Get the most recent full-time score
+                for s in reversed(scores):
+                    if s.score_type == "FULL_TIME":
+                        return s
+                return scores[-1]
+        except Exception as e:
+            log.warning("txodds_scores_failed", fixture_id=fixture_id, error=str(e))
+        return None
 
     # ── Upcoming fixtures with all market types ───────────────────────────────
 
@@ -91,6 +142,11 @@ class OddsApiClient:
         now = int(time.time())
         cutoff = now + lookahead_seconds
         fixtures: list[Fixture] = []
+
+        # Try TXOdds first if available
+        txodds_fixtures = {}
+        if self._txodds:
+            txodds_fixtures = await self._fetch_txodds_fixtures()
 
         for sport in self._sports:
             try:
@@ -150,6 +206,11 @@ class OddsApiClient:
                                             away_odds=away_odds,
                                         )
 
+                    # Get league name if available
+                    league = None
+                    if bookmakers:
+                        league = bookmakers[0].get("title")
+
                     fixtures.append(Fixture(
                         event_id=ev["id"],
                         sport_key=sport,
@@ -158,6 +219,8 @@ class OddsApiClient:
                         start_time=start,
                         has_draw=sport in THREE_WAY_SPORTS,
                         markets=markets,
+                        source="txodds" if txodds_fixtures else "the-odds-api",
+                        league=league,
                     ))
             except httpx.HTTPStatusError as exc:
                 log.warning("odds_api_error", sport=sport, status=exc.response.status_code)
@@ -220,6 +283,8 @@ class OddsApiClient:
                     away_team=away,
                     winning_outcome=winning_outcome,
                     completed=True,
+                    home_score=home_score,
+                    away_score=away_score,
                 ))
         except httpx.HTTPStatusError as exc:
             log.warning("scores_api_error", sport=sport, status=exc.response.status_code)
