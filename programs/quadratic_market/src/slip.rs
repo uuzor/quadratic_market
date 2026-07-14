@@ -357,16 +357,21 @@ pub fn calculate_quote(
         .checked_sub(fee_amount)
         .ok_or(QuadraticMarketError::MathOverflow)?;
     
-    // Calculate multiplicative odds (product of all odds)
-    let mut odds_product: u64 = 10000; // Start at 1.0x (in bps)
+    // Calculate multiplicative odds: product = 10000 * ∏(odds_i) / 10000^n
+    // Use u128 for accumulator to prevent overflow (u128 max = 3.4e38)
+    // For MAX_SLIP_LEGS=5 and max_odds=100000, product = 10^30 < u128 max
+    let mut odds_product: u128 = 10000; // Start at 1.0x in bps
     for i in 0..n {
         let odds_bps = fixed_odds_bps[i];
         odds_product = odds_product
-            .checked_mul(odds_bps)
-            .ok_or(QuadraticMarketError::MathOverflow)?
-            .checked_div(10000)
+            .checked_mul(odds_bps as u128)
             .ok_or(QuadraticMarketError::MathOverflow)?;
     }
+    // Divide by 10000 for each leg (convert bps^2 back to bps)
+    odds_product = odds_product
+        .checked_div(10000u128.pow(n as u32))
+        .ok_or(QuadraticMarketError::MathOverflow)?;
+    let odds_product = odds_product as u64;
     
     // Calculate correlation multiplier based on number of legs
     // Formula: multiplier = 10000 - (number_of_pairs * 25 * 250)
@@ -742,15 +747,17 @@ pub fn buy_leg_for_slip_handler<'info>(
         let leg_net = leg_net_stake - leg_fee;
         
         // Calculate parlay payout (multiplicative odds)
-        // Multiply all odds together first, then divide once
-        let mut odds_product: u64 = 10000; // Start at 1.0x (in bps)
+        // Use u128 for accumulator to prevent overflow
+        let mut odds_product: u128 = 10000; // Start at 1.0x (in bps)
         for i in 0..slip.num_legs as usize {
             odds_product = odds_product
-                .checked_mul(slip.leg_fixed_odds_bps[i])
-                .ok_or(QuadraticMarketError::MathOverflow)?
-                .checked_div(10000)
+                .checked_mul(slip.leg_fixed_odds_bps[i] as u128)
                 .ok_or(QuadraticMarketError::MathOverflow)?;
         }
+        // Divide by 10000 for each leg
+        odds_product = odds_product
+            .checked_div(10000u128.pow(slip.num_legs as u32))
+            .ok_or(QuadraticMarketError::MathOverflow)?;
         
         // Apply correlation discount
         let correlation_multiplier = match slip.num_legs {
@@ -761,7 +768,7 @@ pub fn buy_leg_for_slip_handler<'info>(
         
         // total_payout = leg_net * odds_product * correlation_multiplier / 10000
         let total_payout = leg_net
-            .checked_mul(odds_product)
+            .checked_mul(odds_product as u64)
             .ok_or(QuadraticMarketError::MathOverflow)?
             .checked_mul(correlation_multiplier)
             .ok_or(QuadraticMarketError::MathOverflow)?

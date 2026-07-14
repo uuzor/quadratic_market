@@ -166,12 +166,10 @@ pub fn claim_paused_bet_handler(ctx: Context<ClaimPausedBet>, _slip_id: u64) -> 
     let slip = &ctx.accounts.bet_slip;
     require!(!slip.claimed, QuadraticMarketError::SlipAlreadyClaimed);
 
-    // Calculate refund: only the unused portion
-    // total_stake was escrowed, but only total_cost was used for buying legs
-    // Refund = total_stake - used_stake (proportional to legs bought)
-    let legs_bought = slip.legs_bought_mask.count_ones() as u64;
-    let used_stake = legs_bought * (slip.total_stake / slip.num_legs as u64);
-    let refund = slip.total_stake.saturating_sub(used_stake);
+    // Calculate refund: total_stake - total_cost (total_cost includes fees on bought legs)
+    let refund = slip.total_stake
+        .checked_sub(slip.total_cost)
+        .ok_or(QuadraticMarketError::MathOverflow)?;
     
     require!(refund > 0, QuadraticMarketError::InvalidAmount);
 
