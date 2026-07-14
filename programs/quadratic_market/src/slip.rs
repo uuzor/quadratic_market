@@ -49,8 +49,6 @@ pub struct Slip {
     pub total_cost: u64,          // Sum of actual leg costs (net stake after fee)
     pub total_liability: u64,     // Sum of leg payouts (what was added to locked_payouts)
     pub potential_payout: u64,    // Correlation-adjusted payout if all legs win
-    pub quoted_payout: u64,       // Quoted payout at slip creation time
-    pub correlation_multiplier_bps: u16,  // Correlation discount applied (10000 = no discount)
     pub locked_amount: u64,        // Treasury lock (same as potential_payout)
     pub status: SlipStatus,
     pub created_at: i64,
@@ -75,8 +73,6 @@ impl Slip {
         + 8   // total_cost
         + 8   // total_liability
         + 8   // potential_payout
-        + 8   // quoted_payout
-        + 2   // correlation_multiplier_bps
         + 8   // locked_amount
         + 1   // status
         + 8   // created_at
@@ -506,14 +502,6 @@ pub fn place_slip_await_handler<'info>(
 
     let now = Clock::get()?.unix_timestamp;
 
-    // Calculate quote for this slip (odds, payout, correlation)
-    let quote = calculate_quote(
-        &legs,
-        &fixed_odds,
-        stake,
-        config.house_fee_bps,
-    )?;
-
     // Initialize slip
     slip.owner = ctx.accounts.owner.key();
     slip.slip_id = slip_id;
@@ -526,8 +514,6 @@ pub fn place_slip_await_handler<'info>(
     slip.total_cost = 0; // Accumulated from leg costs (net stake after fee)
     slip.total_liability = 0; // Accumulated from leg payouts (for locked_payouts tracking)
     slip.potential_payout = 0; // Will be calculated after all legs bought
-    slip.quoted_payout = quote.payout; // Store quoted payout at creation time
-    slip.correlation_multiplier_bps = quote.correlation_multiplier_bps;
     slip.locked_amount = 0;
     slip.status = SlipStatus::Pending;
     slip.created_at = now;
@@ -566,8 +552,6 @@ pub fn place_slip_await_handler<'info>(
         owner: slip.owner,
         num_legs: slip.num_legs,
         stake,
-        quoted_payout: slip.quoted_payout,
-        correlation_multiplier_bps: slip.correlation_multiplier_bps,
         cancel_deadline,
     });
 
@@ -755,8 +739,8 @@ pub fn buy_leg_for_slip_handler<'info>(
     if slip.all_legs_bought() {
         slip.status = SlipStatus::Active;
         
-        // Calculate payout using same formula as quote to ensure consistency
-        // This must match calculate_quote() in place_slip_await
+        // Calculate payout with correlation discount
+        // Correlation multiplier: 2 legs = 8500 (15% discount), 3+ legs = 8000 (20% discount)
         
         let leg_net_stake = slip.total_stake / slip.num_legs as u64;
         let leg_fee = leg_net_stake * config.house_fee_bps / 10000;
@@ -772,9 +756,14 @@ pub fn buy_leg_for_slip_handler<'info>(
                 / 10000;
         }
         
-        // Apply correlation discount (from stored quote)
+        // Apply correlation discount
+        let correlation_multiplier = match slip.num_legs {
+            1 => 10000u64,  // No discount for single leg
+            2 => 8500,      // 15% discount
+            _ => 8000,      // 20% discount for 3+ legs
+        };
         total_payout = total_payout
-            .checked_mul(slip.correlation_multiplier_bps as u64)
+            .checked_mul(correlation_multiplier)
             .ok_or(QuadraticMarketError::MathOverflow)?
             / 10000;
         
@@ -1090,8 +1079,6 @@ pub struct SlipAwaited {
     pub owner: Pubkey,
     pub num_legs: u8,
     pub stake: u64,
-    pub quoted_payout: u64,              // Potential payout quoted at creation
-    pub correlation_multiplier_bps: u16, // Correlation discount applied
     pub cancel_deadline: i64,
 }
 
@@ -1137,9 +1124,9 @@ mod tests {
 
     #[test]
     fn slip_len_matches_expected() {
-        // Verify the LEN constant is correct (added quoted_payout +8, correlation_multiplier_bps +2)
-        // 8 + 32 + 8 + 8 + 1 + 40 + 5 + 40 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 2 + 8 + 8 + 1 + 1 = 217
-        assert_eq!(Slip::LEN, 217);
+        // Verify the LEN constant is correct
+        // 8 + 32 + 8 + 8 + 1 + 40 + 5 + 40 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 1 + 8 + 8 + 1 + 1 = 207
+        assert_eq!(Slip::LEN, 207);
     }
 
     #[test]
@@ -1159,8 +1146,6 @@ mod tests {
             total_cost: 0,
             total_liability: 0,
             potential_payout: 0,
-            quoted_payout: 0,
-            correlation_multiplier_bps: 10000,
             locked_amount: 0,
             status: SlipStatus::Pending,
             created_at: 0,
@@ -1194,8 +1179,6 @@ mod tests {
             total_cost: 0,
             total_liability: 0,
             potential_payout: 0,
-            quoted_payout: 0,
-            correlation_multiplier_bps: 10000,
             locked_amount: 0,
             status: SlipStatus::Active,
             created_at: 0,
@@ -1228,8 +1211,6 @@ mod tests {
             total_cost: 0,
             total_liability: 0,
             potential_payout: 0,
-            quoted_payout: 0,
-            correlation_multiplier_bps: 10000,
             locked_amount: 0,
             status: SlipStatus::Pending,
             created_at: 0,
@@ -1266,8 +1247,6 @@ mod tests {
             total_cost: 0,
             total_liability: 0,
             potential_payout: 0,
-            quoted_payout: 0,
-            correlation_multiplier_bps: 10000,
             locked_amount: 0,
             status: SlipStatus::Pending,
             created_at: 0,
@@ -1296,8 +1275,6 @@ mod tests {
             total_cost: 0,
             total_liability: 0,
             potential_payout: 0,
-            quoted_payout: 0,
-            correlation_multiplier_bps: 10000,
             locked_amount: 0,
             status: SlipStatus::Active,
             created_at: 0,
@@ -1329,8 +1306,6 @@ mod tests {
             total_cost: 0,
             total_liability: 0,
             potential_payout: 0,
-            quoted_payout: 0,
-            correlation_multiplier_bps: 10000,
             locked_amount: 0,
             status: SlipStatus::Pending,
             created_at: 0,
@@ -1376,8 +1351,6 @@ mod tests {
             total_cost: 0,
             total_liability: 0,
             potential_payout: 0,
-            quoted_payout: 0,
-            correlation_multiplier_bps: 10000,
             locked_amount: 0,
             status: SlipStatus::Active,
             created_at: 0,
