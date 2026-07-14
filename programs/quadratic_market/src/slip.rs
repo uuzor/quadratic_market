@@ -357,11 +357,11 @@ pub fn calculate_quote(
         .checked_sub(fee_amount)
         .ok_or(QuadraticMarketError::MathOverflow)?;
     
-    // Calculate multiplicative odds
-    let mut total_odds_bps: u64 = 10000; // Start at 1.0x
+    // Calculate multiplicative odds (product of all odds)
+    let mut odds_product: u64 = 10000; // Start at 1.0x (in bps)
     for i in 0..n {
         let odds_bps = fixed_odds_bps[i];
-        total_odds_bps = total_odds_bps
+        odds_product = odds_product
             .checked_mul(odds_bps)
             .ok_or(QuadraticMarketError::MathOverflow)?
             .checked_div(10000)
@@ -379,15 +379,10 @@ pub fn calculate_quote(
         _ => 8000,  // 20% discount for 3+ legs
     };
     
-    // Calculate payout: net_stake * combined_odds * correlation_multiplier
-    let mut payout = net_stake
-        .checked_mul(total_odds_bps)
+    // Calculate payout: net_stake * odds_product * correlation_multiplier / 10000
+    let payout = net_stake
+        .checked_mul(odds_product)
         .ok_or(QuadraticMarketError::MathOverflow)?
-        .checked_div(10000)
-        .ok_or(QuadraticMarketError::MathOverflow)?;
-    
-    // Apply correlation discount
-    payout = payout
         .checked_mul(correlation_multiplier_bps as u64)
         .ok_or(QuadraticMarketError::MathOverflow)?
         .checked_div(10000)
@@ -396,7 +391,7 @@ pub fn calculate_quote(
     Ok(QuoteResult {
         payout,
         correlation_multiplier_bps,
-        total_odds_bps,
+        total_odds_bps: odds_product,
         fee_amount,
         net_stake,
     })
@@ -747,13 +742,14 @@ pub fn buy_leg_for_slip_handler<'info>(
         let leg_net = leg_net_stake - leg_fee;
         
         // Calculate parlay payout (multiplicative odds)
-        let mut total_payout: u64 = leg_net;
+        // Multiply all odds together first, then divide once
+        let mut odds_product: u64 = 10000; // Start at 1.0x (in bps)
         for i in 0..slip.num_legs as usize {
-            let odds_bps = slip.leg_fixed_odds_bps[i];
-            total_payout = total_payout
-                .checked_mul(odds_bps)
+            odds_product = odds_product
+                .checked_mul(slip.leg_fixed_odds_bps[i])
                 .ok_or(QuadraticMarketError::MathOverflow)?
-                / 10000;
+                .checked_div(10000)
+                .ok_or(QuadraticMarketError::MathOverflow)?;
         }
         
         // Apply correlation discount
@@ -762,10 +758,15 @@ pub fn buy_leg_for_slip_handler<'info>(
             2 => 8500,      // 15% discount
             _ => 8000,      // 20% discount for 3+ legs
         };
-        total_payout = total_payout
+        
+        // total_payout = leg_net * odds_product * correlation_multiplier / 10000
+        let total_payout = leg_net
+            .checked_mul(odds_product)
+            .ok_or(QuadraticMarketError::MathOverflow)?
             .checked_mul(correlation_multiplier)
             .ok_or(QuadraticMarketError::MathOverflow)?
-            / 10000;
+            .checked_div(10000)
+            .ok_or(QuadraticMarketError::MathOverflow)?;
         
         slip.potential_payout = total_payout;
         slip.locked_amount = total_payout;
@@ -837,18 +838,14 @@ pub fn cancel_slip_handler<'info>(
         QuadraticMarketError::SlipNotExpired // Reuse error
     );
 
-    // Calculate refund based on actual costs incurred
-    // The treasury received total_stake at place_slip_await
-    // But only total_cost was used to purchase tokens (sum of leg_costs)
-    // The difference (total_stake - total_cost) is always refundable
-    // Plus any unused legs' proportional stake
-    let legs_bought = slip.legs_bought_mask.count_ones() as u64;
-    let _legs_not_bought = slip.num_legs as u64 - legs_bought;
+    // Calculate refund: total_stake - total_cost (total_cost = sum of net_stakes including fees)
+    // This correctly accounts for fees paid on bought legs
+    let refund = slip.total_stake
+        .checked_sub(slip.total_cost)
+        .ok_or(QuadraticMarketError::MathOverflow)?;
     
-    // Used stake = legs_bought * (total_stake / num_legs)
-    let used_stake = legs_bought * (slip.total_stake / slip.num_legs as u64);
-    // Refund = total_stake - used_stake (unused portion of stake)
-    let refund = slip.total_stake - used_stake;
+    // Count legs bought for event
+    let legs_bought = slip.legs_bought_mask.count_ones() as u64;
     
     // Release locked_payouts by total_liability (the exact amount added)
     // This reverses the locked_payouts increase from buy_leg_for_slip
