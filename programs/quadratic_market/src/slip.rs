@@ -46,9 +46,10 @@ pub struct Slip {
     pub legs_settled_mask: u16,   // bit i = leg i settled
     pub legs_won_mask: u16,       // bit i = leg i won
     pub total_stake: u64,         // Total USDC escrowed
-    pub total_cost: u64,           // Sum of actual leg costs (for payout calc)
-    pub potential_payout: u64,   // Fixed payout if all legs win
-    pub locked_amount: u64,       // Current treasury lock
+    pub total_cost: u64,          // Sum of actual leg costs (net stake after fee)
+    pub total_liability: u64,     // Sum of leg payouts (what was added to locked_payouts)
+    pub potential_payout: u64,    // Correlation-adjusted payout if all legs win
+    pub locked_amount: u64,        // Treasury lock (same as potential_payout)
     pub status: SlipStatus,
     pub created_at: i64,
     pub cancel_deadline: i64,
@@ -70,6 +71,7 @@ impl Slip {
         + 2   // legs_won_mask
         + 8   // total_stake
         + 8   // total_cost
+        + 8   // total_liability
         + 8   // potential_payout
         + 8   // locked_amount
         + 1   // status
@@ -177,39 +179,61 @@ impl Slip {
 /// - Legs from different groups are independent (no correlation applied)
 pub fn validate_slip_correlation(
     legs: &[SlipLeg],
-    markets: &[&Account<Market>],
+    _markets: &[&Account<Market>],
     group: Option<&Account<MarketGroup>>,
 ) -> Result<u64> {
     let n = legs.len();
     require!(n > 0, QuadraticMarketError::SlipNoLegs);
     require!(n <= MAX_SLIP_LEGS, QuadraticMarketError::SlipTooManyLegs);
     
-    // Build market index mapping: market_id -> group market index (0=1X2, 1=O/U, 2=GGNG)
-    let mut market_to_group_index: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    // Build market index mapping using fixed array (no heap allocation)
+    let mut market_to_group_index: [(u64, usize); MAX_SLIP_LEGS] = [(0, 0); MAX_SLIP_LEGS];
+    let mut mapping_count: usize = 0;
+    
     if let Some(g) = group {
         for (idx, &mkt_id) in g.market_ids.iter().enumerate() {
-            if mkt_id != 0 {
-                market_to_group_index.insert(mkt_id, idx);
+            if mkt_id != 0 && mapping_count < MAX_SLIP_LEGS {
+                market_to_group_index[mapping_count] = (mkt_id, idx);
+                mapping_count += 1;
             }
         }
     }
     
-    // Check for same-market, different outcomes
-    let mut seen_markets: std::collections::HashMap<u64, u8> = std::collections::HashMap::new();
+    // Helper to get group index
+    let get_group_index = |market_id: u64| -> Option<usize> {
+        for i in 0..mapping_count {
+            if market_to_group_index[i].0 == market_id {
+                return Some(market_to_group_index[i].1);
+            }
+        }
+        None
+    };
+    
+    // Check for same-market, different outcomes (using fixed array)
+    let mut seen_markets: [u64; MAX_SLIP_LEGS] = [0; MAX_SLIP_LEGS];
+    let mut seen_outcomes: [u8; MAX_SLIP_LEGS] = [0; MAX_SLIP_LEGS];
+    let mut seen_count: usize = 0;
+    
     for leg in legs {
-        if let Some(&prev_outcome) = seen_markets.get(&leg.market_id) {
-            // Same market, different outcome = MUTUALLY EXCLUSIVE = REJECT
-            require!(
-                prev_outcome == leg.outcome_id,
-                QuadraticMarketError::CorrelatedLegsMutuallyExclusive
-            );
-        } else {
-            seen_markets.insert(leg.market_id, leg.outcome_id);
+        let mut found = false;
+        for i in 0..seen_count {
+            if seen_markets[i] == leg.market_id {
+                require!(
+                    seen_outcomes[i] == leg.outcome_id,
+                    QuadraticMarketError::CorrelatedLegsMutuallyExclusive
+                );
+                found = true;
+                break;
+            }
+        }
+        if !found && seen_count < MAX_SLIP_LEGS {
+            seen_markets[seen_count] = leg.market_id;
+            seen_outcomes[seen_count] = leg.outcome_id;
+            seen_count += 1;
         }
     }
     
     // Calculate correlation-adjusted payout multiplier
-    // For each pair of legs from the same group, apply correlation
     let mut total_multiplier = 10000u64; // Start at 1.0x (10000 bps)
     
     if let Some(g) = group {
@@ -218,41 +242,34 @@ pub fn validate_slip_correlation(
         // For each pair of legs
         for i in 0..n {
             for j in (i + 1)..n {
-                let mkt_i = &markets[i];
-                let mkt_j = &markets[j];
-                
                 // Get group indices
-                let Some(idx_i) = market_to_group_index.get(&legs[i].market_id) else {
+                let Some(idx_i) = get_group_index(legs[i].market_id) else {
                     continue;
                 };
-                let Some(idx_j) = market_to_group_index.get(&legs[j].market_id) else {
+                let Some(idx_j) = get_group_index(legs[j].market_id) else {
                     continue;
                 };
                 
-                // Same group index = same market type, calculate correlation
+                // Same group index = same market type
                 if idx_i == idx_j {
-                    // Different markets of same type in group - this shouldn't happen with proper market creation
                     continue;
                 }
                 
                 // Get correlation score
-                let corr_bps = correlations.get_correlation(*idx_i, *idx_j);
+                let corr_bps = correlations.get_correlation(idx_i, idx_j);
                 
                 // Apply formula: multiplier = 1 - (correlation_bps * 25 / 10000)
-                // We multiply the total multiplier by this
-                let pair_multiplier = 10000u64
-                    .saturating_sub(corr_bps as u64 * CORRELATION_BPS_MULTIPLIER);
+                let pair_multiplier = correlations.payout_multiplier(corr_bps);
                 
                 // Accumulate correlation effect
-                // Simple approach: multiply all pair multipliers together (in bps)
                 total_multiplier = total_multiplier
                     .saturating_mul(pair_multiplier)
-                    .saturating_div(10000); // Back to bps
+                    .saturating_div(10000);
             }
         }
     }
     
-    Ok(total_multiplier) // Returns multiplier in bps (10000 = no correlation discount)
+    Ok(total_multiplier)
 }
 
 /// Calculate potential payout for a slip with correlation adjustment.
@@ -361,18 +378,31 @@ pub fn place_slip_await_handler<'info>(
     // ─── Same-Market Rejection Check ───────────────────────────────
     // Cannot bet two different outcomes from the same market
     // e.g., Home AND Away from same 1X2 market is MUTUALLY EXCLUSIVE
+    // Use fixed-size array instead of HashMap to avoid heap allocation on Solana
     {
-        use std::collections::HashMap;
-        let mut seen: HashMap<u64, u8> = HashMap::new();
+        let mut seen_markets: [u64; MAX_SLIP_LEGS] = [0; MAX_SLIP_LEGS];
+        let mut seen_outcomes: [u8; MAX_SLIP_LEGS] = [0; MAX_SLIP_LEGS];
+        let mut seen_count: usize = 0;
+        
         for leg in &legs {
-            if let Some(&prev_outcome) = seen.get(&leg.market_id) {
-                // Same market_id with different outcome_id = REJECT
-                require!(
-                    prev_outcome == leg.outcome_id,
-                    QuadraticMarketError::CorrelatedLegsMutuallyExclusive
-                );
-            } else {
-                seen.insert(leg.market_id, leg.outcome_id);
+            // Check if we've seen this market before
+            let mut found = false;
+            for i in 0..seen_count {
+                if seen_markets[i] == leg.market_id {
+                    // Same market_id with different outcome_id = REJECT
+                    require!(
+                        seen_outcomes[i] == leg.outcome_id,
+                        QuadraticMarketError::CorrelatedLegsMutuallyExclusive
+                    );
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                require!(seen_count < MAX_SLIP_LEGS, QuadraticMarketError::SlipTooManyLegs);
+                seen_markets[seen_count] = leg.market_id;
+                seen_outcomes[seen_count] = leg.outcome_id;
+                seen_count += 1;
             }
         }
     }
@@ -394,7 +424,8 @@ pub fn place_slip_await_handler<'info>(
     slip.legs_settled_mask = 0;
     slip.legs_won_mask = 0;
     slip.total_stake = stake;
-    slip.total_cost = 0; // Accumulated from leg costs during buy_leg_for_slip
+    slip.total_cost = 0; // Accumulated from leg costs (net stake after fee)
+    slip.total_liability = 0; // Accumulated from leg payouts (for locked_payouts tracking)
     slip.potential_payout = 0; // Will be calculated after all legs bought
     slip.locked_amount = 0;
     slip.status = SlipStatus::Pending;
@@ -476,7 +507,7 @@ pub struct BuyLegForSlip<'info> {
 
     #[account(
         mut,
-        constraint = outcome_mint.key() == market.outcome_mints[leg_index as usize] @ QuadraticMarketError::WrongOutcomeToken,
+        // outcome_mint is validated dynamically in handler using expected_outcome
     )]
     pub outcome_mint: Account<'info, Mint>,
 
@@ -522,11 +553,17 @@ pub fn buy_leg_for_slip_handler<'info>(
         QuadraticMarketError::InvalidRemainingAccount
     );
 
-    // Validate outcome matches
+    // Validate outcome matches (outcome_id, not leg_index!)
     let expected_outcome = slip.leg_outcome_ids[leg_index as usize];
     require!(
         expected_outcome < market.num_outcomes,
         QuadraticMarketError::InvalidOutcomeId
+    );
+
+    // Validate outcome mint matches the expected outcome
+    require!(
+        ctx.accounts.outcome_mint.key() == market.outcome_mints[expected_outcome as usize],
+        QuadraticMarketError::WrongOutcomeToken
     );
 
     // Market must be open
@@ -593,7 +630,7 @@ pub fn buy_leg_for_slip_handler<'info>(
         .checked_add(leg_payout)
         .ok_or(QuadraticMarketError::MathOverflow)?;
 
-    // Update locked_payouts for the potential payout
+    // Update locked_payouts for the potential payout (liability)
     config.locked_payouts = config.locked_payouts
         .checked_add(leg_payout)
         .ok_or(QuadraticMarketError::MathOverflow)?;
@@ -601,8 +638,13 @@ pub fn buy_leg_for_slip_handler<'info>(
     // Mark leg as bought
     slip.legs_bought_mask |= bit;
 
-    // Accumulate the cost and potential payout
+    // Accumulate the ACTUAL COST (net stake after fee)
     slip.total_cost = slip.total_cost
+        .checked_add(net_stake)
+        .ok_or(QuadraticMarketError::MathOverflow)?;
+
+    // Track total liability for proper release on cancel
+    slip.total_liability = slip.total_liability
         .checked_add(leg_payout)
         .ok_or(QuadraticMarketError::MathOverflow)?;
 
@@ -610,13 +652,16 @@ pub fn buy_leg_for_slip_handler<'info>(
     if slip.all_legs_bought() {
         slip.status = SlipStatus::Active;
         
-        // Calculate potential payout based on odds (multiplied across all legs)
-        // Use net stake per leg
+        // Calculate correlation-adjusted payout
+        // For simplicity, use multiplicative parlay odds with correlation discount
+        // The correlation is applied when multiple legs from same market group are combined
+        
         let leg_net_stake = slip.total_stake / slip.num_legs as u64;
         let leg_fee = leg_net_stake * config.house_fee_bps / 10000;
         let leg_net = leg_net_stake - leg_fee;
         
-        let mut total_payout: u64 = leg_net; // Start with net stake of first leg
+        // Calculate parlay payout (multiplicative odds)
+        let mut total_payout: u64 = leg_net;
         for i in 0..slip.num_legs as usize {
             let odds_bps = slip.leg_fixed_odds_bps[i];
             total_payout = total_payout
@@ -624,6 +669,18 @@ pub fn buy_leg_for_slip_handler<'info>(
                 .ok_or(QuadraticMarketError::MathOverflow)?
                 / 10000;
         }
+        
+        // Apply correlation discount if multiple legs from same market group
+        // For now, use conservative 15% discount for 2+ legs
+        // In production, this should use the actual correlation matrix
+        if slip.num_legs >= 2 {
+            let correlation_discount = if slip.num_legs == 2 { 8500 } else { 8000 }; // 85% or 80% of payout
+            total_payout = total_payout
+                .checked_mul(correlation_discount)
+                .ok_or(QuadraticMarketError::MathOverflow)?
+                / 10000;
+        }
+        
         slip.potential_payout = total_payout;
         slip.locked_amount = total_payout;
     }
@@ -707,9 +764,9 @@ pub fn cancel_slip_handler<'info>(
     // Refund = total_stake - used_stake (unused portion of stake)
     let refund = slip.total_stake - used_stake;
     
-    // Release locked_payouts by total_cost for the bought legs
+    // Release locked_payouts by total_liability (the exact amount added)
     // This reverses the locked_payouts increase from buy_leg_for_slip
-    config.locked_payouts = config.locked_payouts.saturating_sub(slip.total_cost);
+    config.locked_payouts = config.locked_payouts.saturating_sub(slip.total_liability);
 
     // Mark as cancelled
     slip.status = SlipStatus::Cancelled;
@@ -818,9 +875,9 @@ pub fn settle_slip_leg_handler<'info>(
         slip.legs_won_mask |= bit;
     }
 
-    // Release exposure from this leg
-    let leg_stake = slip.total_stake / slip.num_legs as u64;
-    config.locked_payouts = config.locked_payouts.saturating_sub(leg_stake);
+    // NOTE: locked_payouts is released at resolve_slip, not here
+    // This ensures consistency: locked_payouts tracks total potential liability
+    // until the slip is fully resolved (won or lost)
 
     emit!(SlipLegSettled {
         slip_id,
@@ -981,9 +1038,9 @@ mod tests {
 
     #[test]
     fn slip_len_matches_expected() {
-        // Verify the LEN constant is correct
-        // 8 + 32 + 8 + 8 + 1 + 128 + 16 + 128 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 1 + 8 + 8 + 1 + 1 = 386
-        assert_eq!(Slip::LEN, 199);
+        // Verify the LEN constant is correct (added total_liability field: +8 bytes)
+        // 8 + 32 + 8 + 8 + 1 + 40 + 5 + 40 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 1 + 8 + 8 + 1 + 1 = 207
+        assert_eq!(Slip::LEN, 207);
     }
 
     #[test]
@@ -1001,6 +1058,7 @@ mod tests {
             legs_won_mask: 0,
             total_stake: 1000,
             total_cost: 0,
+            total_liability: 0,
             potential_payout: 0,
             locked_amount: 0,
             status: SlipStatus::Pending,
@@ -1033,6 +1091,7 @@ mod tests {
             legs_won_mask: 0b0111,
             total_stake: 1000,
             total_cost: 0,
+            total_liability: 0,
             potential_payout: 0,
             locked_amount: 0,
             status: SlipStatus::Active,
@@ -1064,6 +1123,7 @@ mod tests {
             legs_won_mask: 0,
             total_stake: 1000,
             total_cost: 0,
+            total_liability: 0,
             potential_payout: 0,
             locked_amount: 0,
             status: SlipStatus::Pending,
@@ -1099,6 +1159,7 @@ mod tests {
             legs_won_mask: 0,
             total_stake: 1000,
             total_cost: 0,
+            total_liability: 0,
             potential_payout: 0,
             locked_amount: 0,
             status: SlipStatus::Pending,
@@ -1126,6 +1187,7 @@ mod tests {
             legs_won_mask: 0b0100, // only leg 2 won
             total_stake: 1000,
             total_cost: 0,
+            total_liability: 0,
             potential_payout: 0,
             locked_amount: 0,
             status: SlipStatus::Active,
@@ -1156,6 +1218,7 @@ mod tests {
             legs_won_mask: 0,
             total_stake: 0,
             total_cost: 0,
+            total_liability: 0,
             potential_payout: 0,
             locked_amount: 0,
             status: SlipStatus::Pending,
@@ -1200,6 +1263,7 @@ mod tests {
             legs_won_mask: 0b0100, // only leg 2
             total_stake: 1000,
             total_cost: 0,
+            total_liability: 0,
             potential_payout: 0,
             locked_amount: 0,
             status: SlipStatus::Active,

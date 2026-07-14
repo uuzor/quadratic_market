@@ -131,8 +131,9 @@ pub fn add_market_to_group_handler(
     // Link market to group
     market.group_id = Some(group_id);
 
-    // Add market to group's list
-    let idx = group.num_markets as usize;
+    // Add market to group's list at the specified index (0=1X2, 1=O/U, 2=GG/NG)
+    // This ensures correlation matrix lookups work correctly
+    let idx = market_index as usize;
     let mid = market.market_id;
     group.market_ids[idx] = mid;
     group.num_markets += 1;
