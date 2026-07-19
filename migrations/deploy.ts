@@ -84,33 +84,8 @@ async function main() {
     console.log("Protocol initialized!");
     console.log("Transaction:", initializeTx);
 
-    // 2. Initialize Settlement Council
-    console.log("\n2. Initializing Settlement Council...");
-    const [settlementCouncilPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("settlement_council")],
-      program.programId
-    );
-    console.log("Settlement Council PDA:", settlementCouncilPda.toString());
-
-    const councilTx = await program.methods
-      .initializeSettlementCouncil(
-        new anchor.BN(100_000_000), // min_stake: 100 USDC
-        2 // required_confirmations: 2-of-3
-      )
-      .accountsStrict({
-        globalConfig: globalConfigPda,
-        settlementCouncil: settlementCouncilPda,
-        authority: admin,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([])
-      .rpc();
-
-    console.log("Settlement Council initialized!");
-    console.log("Transaction:", councilTx);
-
-    // 3. Initialize the first epoch
-    console.log("\n3. Initializing first epoch...");
+  // 2. Initialize the first epoch
+  console.log("\n2. Initializing first epoch...");
     const [epochPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("epoch"), new anchor.BN(0).toArrayLike(Buffer, "le", 8)],
       program.programId

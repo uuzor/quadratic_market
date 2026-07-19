@@ -1,9 +1,9 @@
+use crate::constants::{seeds, BPS_SCALE, SCALE};
+use crate::errors::QuadraticMarketError;
+use crate::state::{GlobalConfig, LimitOrder, Market, MarketStatus, OrderSide, OrderStatus};
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use crate::state::{GlobalConfig, Market, MarketStatus, LimitOrder, OrderSide, OrderStatus};
-use crate::errors::QuadraticMarketError;
-use crate::constants::{seeds, BPS_SCALE, SCALE};
 
 // ─── Place Order ────────────────────────────────────────────────
 //
@@ -83,7 +83,10 @@ pub fn place_order_handler(
     require!(!config.paused, QuadraticMarketError::Paused);
 
     let market = &ctx.accounts.market;
-    require!(market.status == MarketStatus::Open, QuadraticMarketError::MarketNotOpen);
+    require!(
+        market.status == MarketStatus::Open,
+        QuadraticMarketError::MarketNotOpen
+    );
     require!(
         (outcome_id as usize) < market.num_outcomes as usize,
         QuadraticMarketError::InvalidOutcomeId
@@ -107,10 +110,14 @@ pub fn place_order_handler(
     match side {
         OrderSide::Sell => {
             // Transfer outcome tokens from creator to escrow ATA.
-            let creator_ata = ctx.accounts.creator_outcome_ata
+            let creator_ata = ctx
+                .accounts
+                .creator_outcome_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-            let escrow_ata = ctx.accounts.escrow_outcome_ata
+            let escrow_ata = ctx
+                .accounts
+                .escrow_outcome_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
 
@@ -122,15 +129,32 @@ pub fn place_order_handler(
                 QuadraticMarketError::InvalidRemainingAccount
             );
             let expected_outcome_mint = market.outcome_mints[outcome_id as usize];
-            require!(expected_outcome_mint != Pubkey::default(), QuadraticMarketError::WrongOutcomeToken);
-            let outcome_mint = ctx.accounts.outcome_mint
+            require!(
+                expected_outcome_mint != Pubkey::default(),
+                QuadraticMarketError::WrongOutcomeToken
+            );
+            let outcome_mint = ctx
+                .accounts
+                .outcome_mint
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-            require!(outcome_mint.key() == expected_outcome_mint, QuadraticMarketError::WrongOutcomeToken);
-            require!(creator_ata.mint == expected_outcome_mint, QuadraticMarketError::WrongOutcomeToken);
-            require!(escrow_ata.mint == expected_outcome_mint, QuadraticMarketError::WrongOutcomeToken);
+            require!(
+                outcome_mint.key() == expected_outcome_mint,
+                QuadraticMarketError::WrongOutcomeToken
+            );
+            require!(
+                creator_ata.mint == expected_outcome_mint,
+                QuadraticMarketError::WrongOutcomeToken
+            );
+            require!(
+                escrow_ata.mint == expected_outcome_mint,
+                QuadraticMarketError::WrongOutcomeToken
+            );
 
-            require!(creator_ata.amount >= num_shares, QuadraticMarketError::InsufficientShares);
+            require!(
+                creator_ata.amount >= num_shares,
+                QuadraticMarketError::InsufficientShares
+            );
 
             token::transfer(
                 CpiContext::new(
@@ -152,7 +176,9 @@ pub fn place_order_handler(
                 / BPS_SCALE;
             require!(collateral > 0, QuadraticMarketError::InvalidAmount);
 
-            let creator_base = ctx.accounts.creator_base_ata
+            let creator_base = ctx
+                .accounts
+                .creator_base_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
 
@@ -168,7 +194,8 @@ pub fn place_order_handler(
                 collateral,
             )?;
 
-            config.order_collateral_locked = config.order_collateral_locked
+            config.order_collateral_locked = config
+                .order_collateral_locked
                 .checked_add(collateral)
                 .ok_or(QuadraticMarketError::MathOverflow)?;
 
@@ -177,7 +204,8 @@ pub fn place_order_handler(
     }
 
     let order_id = config.next_order_id;
-    config.next_order_id = config.next_order_id
+    config.next_order_id = config
+        .next_order_id
         .checked_add(1)
         .ok_or(QuadraticMarketError::MathOverflow)?;
 
@@ -194,7 +222,7 @@ pub fn place_order_handler(
     order.status = OrderStatus::Open;
     order.created_at = now;
     order.expires_at = expires_at;
-    order.bump = ctx.bumps.order;
+    order.bump = *ctx.bumps.get("order").unwrap();
 
     Ok(())
 }
@@ -254,28 +282,27 @@ pub struct FillOrder<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn fill_order_handler(
-    ctx: Context<FillOrder>,
-    order_id: u64,
-    fill_shares: u64,
-) -> Result<()> {
+pub fn fill_order_handler(ctx: Context<FillOrder>, order_id: u64, fill_shares: u64) -> Result<()> {
     let config = &mut ctx.accounts.global_config;
     require!(!config.paused, QuadraticMarketError::Paused);
 
     // Copy scalar fields before any mutable borrow of the order account.
     // The order PDA's AccountInfo is needed as a CPI signer for sell-order escrow
     // transfers, which conflicts with the mutable borrow used to update state.
-    let order_fillable   = ctx.accounts.order.is_fillable();
-    let order_remaining  = ctx.accounts.order.remaining_shares();
+    let order_fillable = ctx.accounts.order.is_fillable();
+    let order_remaining = ctx.accounts.order.remaining_shares();
     let order_expires_at = ctx.accounts.order.expires_at;
-    let order_price      = ctx.accounts.order.price_per_share;
-    let order_side       = ctx.accounts.order.side.clone();
-    let order_bump       = ctx.accounts.order.bump;
+    let order_price = ctx.accounts.order.price_per_share;
+    let order_side = ctx.accounts.order.side.clone();
+    let order_bump = ctx.accounts.order.bump;
     let order_num_shares = ctx.accounts.order.num_shares;
 
     require!(order_fillable, QuadraticMarketError::OrderNotFillable);
     require!(fill_shares > 0, QuadraticMarketError::InvalidAmount);
-    require!(fill_shares <= order_remaining, QuadraticMarketError::FillExceedsOrder);
+    require!(
+        fill_shares <= order_remaining,
+        QuadraticMarketError::FillExceedsOrder
+    );
 
     let now = Clock::get()?.unix_timestamp;
     if order_expires_at > 0 {
@@ -296,16 +323,24 @@ pub fn fill_order_handler(
         OrderSide::Sell => {
             // Filler pays USDC to the order creator.
             // Escrowed outcome tokens are released to the filler.
-            let filler_base = ctx.accounts.filler_base_ata
+            let filler_base = ctx
+                .accounts
+                .filler_base_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-            let creator_base = ctx.accounts.creator_base_ata
+            let creator_base = ctx
+                .accounts
+                .creator_base_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-            let escrow_ata = ctx.accounts.escrow_outcome_ata
+            let escrow_ata = ctx
+                .accounts
+                .escrow_outcome_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-            let filler_outcome = ctx.accounts.filler_outcome_ata
+            let filler_outcome = ctx
+                .accounts
+                .filler_outcome_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
 
@@ -325,11 +360,8 @@ pub fn fill_order_handler(
             // 2. Release escrowed outcome tokens to filler.
             // Escrow ATA is owned by the order PDA — sign with order seeds.
             let order_id_bytes = order_id.to_le_bytes();
-            let order_seeds: &[&[&[u8]]] = &[&[
-                seeds::ORDER,
-                order_id_bytes.as_ref(),
-                &[order_bump],
-            ]];
+            let order_seeds: &[&[&[u8]]] =
+                &[&[seeds::ORDER, order_id_bytes.as_ref(), &[order_bump]]];
             token::transfer(
                 CpiContext::new_with_signer(
                     ctx.accounts.token_program.to_account_info(),
@@ -347,10 +379,14 @@ pub fn fill_order_handler(
         OrderSide::Buy => {
             // Filler provides outcome tokens to the order creator.
             // Treasury releases locked USDC collateral to the filler.
-            let filler_outcome = ctx.accounts.filler_outcome_ata
+            let filler_outcome = ctx
+                .accounts
+                .filler_outcome_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-            let creator_outcome = ctx.accounts.creator_outcome_ata
+            let creator_outcome = ctx
+                .accounts
+                .creator_outcome_ata
                 .as_ref()
                 .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
             let (expected_mint_pda, _) = Pubkey::find_program_address(
@@ -361,8 +397,14 @@ pub fn fill_order_handler(
                 ],
                 &crate::ID,
             );
-            require!(filler_outcome.mint == expected_mint_pda, QuadraticMarketError::WrongOutcomeToken);
-            require!(creator_outcome.mint == expected_mint_pda, QuadraticMarketError::WrongOutcomeToken);
+            require!(
+                filler_outcome.mint == expected_mint_pda,
+                QuadraticMarketError::WrongOutcomeToken
+            );
+            require!(
+                creator_outcome.mint == expected_mint_pda,
+                QuadraticMarketError::WrongOutcomeToken
+            );
 
             // 1. Filler transfers outcome tokens to creator
             token::transfer(
@@ -384,7 +426,9 @@ pub fn fill_order_handler(
                     ctx.accounts.token_program.to_account_info(),
                     token::Transfer {
                         from: ctx.accounts.treasury_base_ata.to_account_info(),
-                        to: ctx.accounts.filler_base_ata
+                        to: ctx
+                            .accounts
+                            .filler_base_ata
                             .as_ref()
                             .ok_or(QuadraticMarketError::InvalidRemainingAccount)?
                             .to_account_info(),
@@ -395,15 +439,21 @@ pub fn fill_order_handler(
                 fill_cost,
             )?;
 
-            config.order_collateral_locked = config.order_collateral_locked
-                .saturating_sub(fill_cost);
-            ctx.accounts.order.collateral_locked = ctx.accounts.order.collateral_locked
+            config.order_collateral_locked =
+                config.order_collateral_locked.saturating_sub(fill_cost);
+            ctx.accounts.order.collateral_locked = ctx
+                .accounts
+                .order
+                .collateral_locked
                 .saturating_sub(fill_cost);
         }
     }
 
     // Now safe to mutably borrow order for state update — all CPIs are done.
-    let new_filled = ctx.accounts.order.filled_shares
+    let new_filled = ctx
+        .accounts
+        .order
+        .filled_shares
         .checked_add(fill_shares)
         .ok_or(QuadraticMarketError::MathOverflow)?;
     ctx.accounts.order.filled_shares = new_filled;
@@ -463,10 +513,7 @@ pub struct CancelOrder<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn cancel_order_handler(
-    ctx: Context<CancelOrder>,
-    order_id: u64,
-) -> Result<()> {
+pub fn cancel_order_handler(ctx: Context<CancelOrder>, order_id: u64) -> Result<()> {
     // Copy fields out before any mutable borrows (the `close` constraint on the
     // order account causes Anchor to take a mutable borrow of the account info).
     let order_side = ctx.accounts.order.side.clone();
@@ -483,19 +530,20 @@ pub fn cancel_order_handler(
     match order_side {
         OrderSide::Sell => {
             if remaining > 0 {
-                let escrow_ata = ctx.accounts.escrow_outcome_ata
+                let escrow_ata = ctx
+                    .accounts
+                    .escrow_outcome_ata
                     .as_ref()
                     .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-                let creator_outcome = ctx.accounts.creator_outcome_ata
+                let creator_outcome = ctx
+                    .accounts
+                    .creator_outcome_ata
                     .as_ref()
                     .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
 
                 let order_id_bytes = order_id.to_le_bytes();
-                let order_seeds: &[&[&[u8]]] = &[&[
-                    seeds::ORDER,
-                    order_id_bytes.as_ref(),
-                    &[order_bump],
-                ]];
+                let order_seeds: &[&[&[u8]]] =
+                    &[&[seeds::ORDER, order_id_bytes.as_ref(), &[order_bump]]];
                 token::transfer(
                     CpiContext::new_with_signer(
                         ctx.accounts.token_program.to_account_info(),
@@ -512,7 +560,9 @@ pub fn cancel_order_handler(
         }
         OrderSide::Buy => {
             if collateral_locked > 0 {
-                let creator_base = ctx.accounts.creator_base_ata
+                let creator_base = ctx
+                    .accounts
+                    .creator_base_ata
                     .as_ref()
                     .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
 
@@ -530,7 +580,8 @@ pub fn cancel_order_handler(
                     collateral_locked,
                 )?;
 
-                config.order_collateral_locked = config.order_collateral_locked
+                config.order_collateral_locked = config
+                    .order_collateral_locked
                     .saturating_sub(collateral_locked);
             }
         }
@@ -591,10 +642,7 @@ pub struct ExpireOrder<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn expire_order_handler(
-    ctx: Context<ExpireOrder>,
-    order_id: u64,
-) -> Result<()> {
+pub fn expire_order_handler(ctx: Context<ExpireOrder>, order_id: u64) -> Result<()> {
     // Copy fields out before any mutable borrows (same reason as cancel_order_handler).
     let order_side = ctx.accounts.order.side.clone();
     let order_bump = ctx.accounts.order.bump;
@@ -607,7 +655,10 @@ pub fn expire_order_handler(
     require!(order_expires_at > 0, QuadraticMarketError::OrderNotExpired);
 
     let now = Clock::get()?.unix_timestamp;
-    require!(now >= order_expires_at, QuadraticMarketError::OrderNotExpired);
+    require!(
+        now >= order_expires_at,
+        QuadraticMarketError::OrderNotExpired
+    );
 
     let config = &mut ctx.accounts.global_config;
     let treasury_bump = config.treasury_bump;
@@ -615,19 +666,20 @@ pub fn expire_order_handler(
     match order_side {
         OrderSide::Sell => {
             if remaining > 0 {
-                let escrow_ata = ctx.accounts.escrow_outcome_ata
+                let escrow_ata = ctx
+                    .accounts
+                    .escrow_outcome_ata
                     .as_ref()
                     .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
-                let creator_outcome = ctx.accounts.creator_outcome_ata
+                let creator_outcome = ctx
+                    .accounts
+                    .creator_outcome_ata
                     .as_ref()
                     .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
 
                 let order_id_bytes = order_id.to_le_bytes();
-                let order_seeds: &[&[&[u8]]] = &[&[
-                    seeds::ORDER,
-                    order_id_bytes.as_ref(),
-                    &[order_bump],
-                ]];
+                let order_seeds: &[&[&[u8]]] =
+                    &[&[seeds::ORDER, order_id_bytes.as_ref(), &[order_bump]]];
                 token::transfer(
                     CpiContext::new_with_signer(
                         ctx.accounts.token_program.to_account_info(),
@@ -644,7 +696,9 @@ pub fn expire_order_handler(
         }
         OrderSide::Buy => {
             if collateral_locked > 0 {
-                let creator_base = ctx.accounts.creator_base_ata
+                let creator_base = ctx
+                    .accounts
+                    .creator_base_ata
                     .as_ref()
                     .ok_or(QuadraticMarketError::InvalidRemainingAccount)?;
 
@@ -662,7 +716,8 @@ pub fn expire_order_handler(
                     collateral_locked,
                 )?;
 
-                config.order_collateral_locked = config.order_collateral_locked
+                config.order_collateral_locked = config
+                    .order_collateral_locked
                     .saturating_sub(collateral_locked);
             }
         }

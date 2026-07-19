@@ -1,10 +1,10 @@
+use crate::constants::seeds;
+use crate::errors::QuadraticMarketError;
+use crate::slip::Slip as BetSlip;
+use crate::state::{GlobalConfig, Market, MarketStatus};
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use crate::state::{GlobalConfig, Market, MarketStatus};
-use crate::slip::Slip as BetSlip;
-use crate::errors::QuadraticMarketError;
-use crate::constants::seeds;
 
 // ─── Claim Payout ──────────────────────────────────────────────
 
@@ -67,7 +67,10 @@ pub fn claim_payout_handler(ctx: Context<ClaimPayout>, _market_id: u64) -> Resul
     let config = &mut ctx.accounts.global_config;
     let market = &ctx.accounts.market;
 
-    require!(market.status == MarketStatus::Settled, QuadraticMarketError::MarketNotSettled);
+    require!(
+        market.status == MarketStatus::Settled,
+        QuadraticMarketError::MarketNotSettled
+    );
 
     let amount = ctx.accounts.claimer_outcome_ata.amount;
     require!(amount > 0, QuadraticMarketError::NoWinningPositions);
@@ -239,7 +242,11 @@ pub fn close_market_handler(ctx: Context<CloseMarket>, _market_id: u64) -> Resul
     // Return rent to authority
     let lamports = market_account.lamports();
     **market_account.try_borrow_mut_lamports()? = 0;
-    **ctx.accounts.authority.to_account_info().try_borrow_mut_lamports()? += lamports;
+    **ctx
+        .accounts
+        .authority
+        .to_account_info()
+        .try_borrow_mut_lamports()? += lamports;
 
     Ok(())
 }

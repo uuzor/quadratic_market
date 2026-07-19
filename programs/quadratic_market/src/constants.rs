@@ -12,8 +12,8 @@ pub const MAX_OUTCOMES: usize = 8;
 pub const MIN_FIRST_LIQUIDITY: u64 = 1000; // Lock 1000 base units on first deposit
 
 // Settlement — sports-focused: short window, oracle-driven
-pub const DEFAULT_CHALLENGE_WINDOW: i64 = 300;          // 5 minutes
-pub const DEFAULT_SETTLEMENT_DEADLINE: i64 = 14_400;    // 4 hours after start_time
+pub const DEFAULT_CHALLENGE_WINDOW: i64 = 300; // 5 minutes
+pub const DEFAULT_SETTLEMENT_DEADLINE: i64 = 14_400; // 4 hours after start_time
 
 // Token
 pub const BASE_MINT_DECIMALS: u8 = 6;
@@ -29,7 +29,6 @@ pub mod seeds {
     pub const LP_MINT: &[u8] = b"lp_mint";
     pub const MARKET: &[u8] = b"market";
     pub const OUTCOME_MINT: &[u8] = b"outcome_mint";
-    pub const DISPUTE: &[u8] = b"dispute";
     pub const WITHDRAWAL: &[u8] = b"withdrawal";
     pub const MARKET_GROUP: &[u8] = b"market_group";
     pub const BET_SLIP: &[u8] = b"bet_slip";
@@ -37,17 +36,8 @@ pub mod seeds {
     pub const ORDER: &[u8] = b"order";
     pub const EPOCH: &[u8] = b"epoch";
     pub const EPOCH_VAULT: &[u8] = b"epoch_vault";
-    pub const SETTLEMENT_COUNCIL: &[u8] = b"settlement_council";
-    pub const SETTLEMENT_PROPOSAL: &[u8] = b"settlement_proposal";
     pub const SLIP: &[u8] = b"slip";
 }
-
-// Settlement council
-pub const MAX_SETTLEMENT_OPERATORS: usize = 8;
-pub const MAX_CONFIRMATIONS: usize = MAX_SETTLEMENT_OPERATORS;
-pub const DEFAULT_MIN_SETTLEMENT_STAKE: u64 = 10_000_000_000; // 10,000 USDC
-pub const DEFAULT_REQUIRED_CONFIRMATIONS: u8 = 2;
-pub const DEFAULT_CONFIRMATION_WINDOW_SECONDS: i64 = 300; // 5 minutes
 
 // Market groups (tracking only, no correlation)
 pub const MAX_GROUP_MARKETS: usize = 3; // 1X2, O/U, GG/NG
@@ -56,14 +46,14 @@ pub const MAX_GROUP_MARKETS: usize = 3; // 1X2, O/U, GG/NG
 pub const MAX_SLIP_LEGS: usize = 5;
 
 // LP epoch / timing
-pub const DEFAULT_EPOCH_DURATION_SECONDS: i64 = 86_400;       // 24 hours
-pub const DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS: i64 = 86_400;  // 24 hours
+pub const DEFAULT_EPOCH_DURATION_SECONDS: i64 = 86_400; // 24 hours
+pub const DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS: i64 = 86_400; // 24 hours
 
 // Sports risk controls
 pub const DEFAULT_MAX_SINGLE_BET: u64 = 10_000_000_000; // 10,000 USDC
-pub const DEFAULT_MIN_ODDS_BPS: u64 = 100;              // 1% minimum (1.01x)
-pub const DEFAULT_MAX_ODDS_BPS: u64 = 100_000;         // 10x maximum
-pub const DEFAULT_HOUSE_FEE_BPS: u64 = 500;              // 5% house fee
+pub const DEFAULT_MIN_ODDS_BPS: u64 = 100; // 1% minimum (1.01x)
+pub const DEFAULT_MAX_ODDS_BPS: u64 = 100_000; // 10x maximum
+pub const DEFAULT_HOUSE_FEE_BPS: u64 = 500; // 5% house fee
 
 // Operator allowlist
 pub const MAX_OPERATORS: usize = 8;

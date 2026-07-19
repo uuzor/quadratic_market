@@ -59,7 +59,7 @@ cargo build-sbf
 2. `add_liquidity` — LP funds pool
 3. `create_market` — create binary prediction markets
 4. `buy_shares` / `sell_shares` — traders place bets
-5. `suspend_market` → `propose_result` → `finalize_result` — settle markets
+5. `suspend_market` → `settle_with_proof` — settle markets with TxLINE proof
 6. `request_withdraw` → `process_withdrawal` — LP exits
 
 ## User Preferences

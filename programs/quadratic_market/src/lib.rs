@@ -9,38 +9,32 @@ pub mod state;
 pub mod utils;
 
 // Instruction modules
-pub mod initialize;
 pub mod admin;
-pub mod liquidity;
-pub mod market_ops;
-pub mod trade;
-pub mod settlement;
-pub mod settlement_ops;
-pub mod settlement_with_proof;
 pub mod claim;
-pub mod market_group;
-pub mod slip;
-pub mod orders;
 pub mod epoch_ops;
+pub mod initialize;
+pub mod liquidity;
+pub mod market_group;
+pub mod market_ops;
+pub mod orders;
+pub mod settlement_with_proof;
+pub mod slip;
+pub mod trade;
 
 // Bring all account structs into scope so Anchor's #[program]
 // macro references them directly
-use initialize::*;
-use admin::*;
-use liquidity::*;
-use market_ops::*;
-use trade::*;
-use settlement::*;
-use settlement_ops::*;
-use settlement_with_proof::*;
-use claim::*;
-use market_group::*;
-use slip::*;
-use orders::*;
-use epoch_ops::*;
 use crate::state::bet_slip::SlipLeg;
 use crate::state::market::MarketType;
 use crate::state::order::OrderSide;
+use admin::*;
+use claim::*;
+use epoch_ops::*;
+use initialize::*;
+use market_group::*;
+use market_ops::*;
+use orders::*;
+use settlement_with_proof::*;
+use slip::*;
 
 #[program]
 pub mod quadratic_market {
@@ -83,7 +77,19 @@ pub mod quadratic_market {
         house_fee_bps: Option<u64>,
         oracle_pubkey: Option<[u8; 32]>,
     ) -> Result<()> {
-        update_config_handler(ctx, max_market_exposure, challenge_window_seconds, settlement_deadline_seconds, epoch_duration_seconds, withdrawal_cooldown_seconds, max_single_bet, min_odds_bps, max_odds_bps, house_fee_bps, oracle_pubkey)
+        update_config_handler(
+            ctx,
+            max_market_exposure,
+            challenge_window_seconds,
+            settlement_deadline_seconds,
+            epoch_duration_seconds,
+            withdrawal_cooldown_seconds,
+            max_single_bet,
+            min_odds_bps,
+            max_odds_bps,
+            house_fee_bps,
+            oracle_pubkey,
+        )
     }
 
     pub fn add_operator(ctx: Context<AddOperator>, operator: Pubkey) -> Result<()> {
@@ -92,24 +98,6 @@ pub mod quadratic_market {
 
     pub fn remove_operator(ctx: Context<RemoveOperator>, operator: Pubkey) -> Result<()> {
         remove_operator_handler(ctx, operator)
-    }
-
-    // ─── LP Operations ────────────────────────────────────────
-
-    pub fn add_liquidity(ctx: Context<AddLiquidity>, amount: u64) -> Result<()> {
-        add_liquidity_handler(ctx, amount)
-    }
-
-    pub fn request_withdraw(ctx: Context<RequestWithdraw>, shares: u64) -> Result<()> {
-        request_withdraw_handler(ctx, shares)
-    }
-
-    pub fn process_withdrawal(ctx: Context<ProcessWithdrawal>) -> Result<()> {
-        process_withdrawal_handler(ctx)
-    }
-
-    pub fn activate_liquidity(ctx: Context<ActivateLiquidity>) -> Result<()> {
-        activate_liquidity_handler(ctx)
     }
 
     // ─── Market Operations ────────────────────────────────────
@@ -125,7 +113,17 @@ pub mod quadratic_market {
         initial_odds: Vec<u64>,
         txline_fixture_id: Option<u64>,
     ) -> Result<()> {
-        create_market_handler(ctx, start_time, num_outcomes, title, description, category, market_type, initial_odds, txline_fixture_id)
+        create_market_handler(
+            ctx,
+            start_time,
+            num_outcomes,
+            title,
+            description,
+            category,
+            market_type,
+            initial_odds,
+            txline_fixture_id,
+        )
     }
 
     pub fn init_outcome_mint(
@@ -156,38 +154,16 @@ pub mod quadratic_market {
     // All betting goes through the slip system. Use place_slip_await for single or multi-leg bets.
     // Backend executes each leg via buy_leg_for_slip as separate transactions.
 
-    // ─── Settlement ───────────────────────────────────────────
-
-    pub fn propose_result(
-        ctx: Context<ProposeResult>,
-        market_id: u64,
-        proposed_outcome: u8,
-    ) -> Result<()> {
-        propose_result_handler(ctx, market_id, proposed_outcome)
-    }
-
-    pub fn admin_override(
-        ctx: Context<AdminOverride>,
-        market_id: u64,
-        correct_outcome: u8,
-    ) -> Result<()> {
-        admin_override_handler(ctx, market_id, correct_outcome)
-    }
-
-    pub fn finalize_result(ctx: Context<FinalizeResult>, market_id: u64) -> Result<()> {
-        finalize_result_handler(ctx, market_id)
-    }
-
     // ─── TxLINE Proof-Based Settlement ─────────────────────────────
-    // Permissionless settlement using TxLINE Merkle proofs
+    // Role-gated settlement using TxLINE Merkle proofs
 
     /// Settle market using TxLINE on-chain proof validation.
-    /// PERMISSIONLESS: Anyone can call this with valid proof data.
-    /// 
+    /// Only authorized operators/admin can call this with valid proof data.
+    ///
     /// Flow:
     /// 1. Bot fetches proof from TxLINE API
-    /// 2. Bot calls this instruction with proof data
-    /// 3. (Full impl) Program validates proof via CPI to Txoracle
+    /// 2. Bot calls this instruction with Txoracle payload + strategy
+    /// 3. Program validates proof via CPI to Txoracle
     /// 4. Market is settled with the derived outcome
     pub fn settle_with_proof(
         ctx: Context<SettleWithProof>,
@@ -197,6 +173,8 @@ pub mod quadratic_market {
         validation_timestamp: i64,
         home_score: i64,
         away_score: i64,
+        validation_input: StatValidationInput,
+        strategy: NDimensionalStrategy,
     ) -> Result<()> {
         settle_with_proof_handler(
             ctx,
@@ -206,70 +184,9 @@ pub mod quadratic_market {
             validation_timestamp,
             home_score,
             away_score,
+            validation_input,
+            strategy,
         )
-    }
-
-    // ─── Settlement Multisig ────────────────────────────────
-
-    /// Initialize the settlement council (admin only, one-time)
-    pub fn initialize_settlement_council(
-        ctx: Context<InitializeSettlementCouncil>,
-        min_stake: u64,
-        required_confirmations: u8,
-    ) -> Result<()> {
-        initialize_settlement_council_handler(ctx, min_stake, required_confirmations)
-    }
-
-    /// Add a settlement operator to the council
-    pub fn add_settlement_operator(
-        ctx: Context<AddSettlementOperator>,
-        operator: Pubkey,
-        stake: u64,
-    ) -> Result<()> {
-        add_settlement_operator_handler(ctx, operator, stake)
-    }
-
-    /// Remove a settlement operator from the council
-    pub fn remove_settlement_operator(
-        ctx: Context<RemoveSettlementOperator>,
-        operator: Pubkey,
-    ) -> Result<()> {
-        remove_settlement_operator_handler(ctx, operator)
-    }
-
-    /// Propose a settlement outcome (first operator opens the proposal)
-    pub fn propose_settlement(
-        ctx: Context<ProposeSettlement>,
-        market_id: u64,
-        proposed_outcome: u8,
-        tx_hash_ref: [u8; 32],
-    ) -> Result<()> {
-        propose_settlement_handler(ctx, market_id, proposed_outcome, tx_hash_ref)
-    }
-
-    /// Confirm an existing settlement proposal
-    pub fn confirm_settlement(
-        ctx: Context<ConfirmSettlement>,
-        market_id: u64,
-    ) -> Result<()> {
-        confirm_settlement_handler(ctx, market_id)
-    }
-
-    /// Dispute a settlement proposal (alternative outcome)
-    pub fn dispute_settlement(
-        ctx: Context<DisputeSettlement>,
-        market_id: u64,
-        alternative_outcome: u8,
-    ) -> Result<()> {
-        dispute_settlement_handler(ctx, market_id, alternative_outcome)
-    }
-
-    /// Finalize a settlement once quorum is reached (permissionless)
-    pub fn finalize_settlement(
-        ctx: Context<FinalizeSettlement>,
-        market_id: u64,
-    ) -> Result<()> {
-        finalize_settlement_handler(ctx, market_id)
     }
 
     // ─── Claims ───────────────────────────────────────────────
@@ -320,6 +237,23 @@ pub mod quadratic_market {
         update_market_odds_handler(ctx, market_id, new_odds)
     }
 
+    /// Update market odds after validating a TxLINE proof bundle on-chain.
+    pub fn update_market_odds_with_proof(
+        ctx: Context<UpdateMarketOddsWithProof>,
+        market_id: u64,
+        new_odds: Vec<u64>,
+        validation_input: StatValidationInput,
+        strategy: NDimensionalStrategy,
+    ) -> Result<()> {
+        update_market_odds_with_proof_handler(
+            ctx,
+            market_id,
+            new_odds,
+            validation_input,
+            strategy,
+        )
+    }
+
     // ─── Bet Slip (New Decomposed System) ───────────────────────
 
     /// Place slip await: escrows stake, records legs, locks fixed odds.
@@ -328,10 +262,9 @@ pub mod quadratic_market {
         ctx: Context<'_, '_, '_, 'info, PlaceSlipAwait<'info>>,
         legs: Vec<SlipLeg>,
         stake: u64,
-        fixed_odds: Vec<u64>,
         cancel_deadline: i64,
     ) -> Result<()> {
-        place_slip_await_handler(ctx, legs, stake, fixed_odds, cancel_deadline)
+        place_slip_await_handler(ctx, legs, stake, cancel_deadline)
     }
 
     /// Buy one leg for slip. Backend calls this N times after place_slip_await.
@@ -379,28 +312,26 @@ pub mod quadratic_market {
         price_per_share: u64,
         expires_at: i64,
     ) -> Result<()> {
-        place_order_handler(ctx, market_id, outcome_id, side, num_shares, price_per_share, expires_at)
+        place_order_handler(
+            ctx,
+            market_id,
+            outcome_id,
+            side,
+            num_shares,
+            price_per_share,
+            expires_at,
+        )
     }
 
-    pub fn fill_order(
-        ctx: Context<FillOrder>,
-        order_id: u64,
-        fill_shares: u64,
-    ) -> Result<()> {
+    pub fn fill_order(ctx: Context<FillOrder>, order_id: u64, fill_shares: u64) -> Result<()> {
         fill_order_handler(ctx, order_id, fill_shares)
     }
 
-    pub fn cancel_order(
-        ctx: Context<CancelOrder>,
-        order_id: u64,
-    ) -> Result<()> {
+    pub fn cancel_order(ctx: Context<CancelOrder>, order_id: u64) -> Result<()> {
         cancel_order_handler(ctx, order_id)
     }
 
-    pub fn expire_order(
-        ctx: Context<ExpireOrder>,
-        order_id: u64,
-    ) -> Result<()> {
+    pub fn expire_order(ctx: Context<ExpireOrder>, order_id: u64) -> Result<()> {
         expire_order_handler(ctx, order_id)
     }
 
@@ -410,12 +341,6 @@ pub mod quadratic_market {
     /// Must be called before any markets can be created in a new epoch.
     pub fn init_epoch(ctx: Context<InitEpoch>) -> Result<()> {
         init_epoch_handler(ctx)
-    }
-
-    /// Advance to the next epoch. Requires all markets in the current epoch
-    /// to be settled. Unpauses the epoch gate for the new epoch.
-    pub fn advance_epoch(ctx: Context<AdvanceEpoch>) -> Result<()> {
-        advance_epoch_handler(ctx)
     }
 
     /// Pause epoch — blocks deposits, withdrawals, and market creation.

@@ -1,5 +1,5 @@
-use anchor_lang::prelude::*;
 use crate::constants::SCALE;
+use anchor_lang::prelude::*;
 
 /// Tracks liquidity provided by LPs who opted into a specific epoch.
 /// Each epoch has its own vault, isolating capital and preventing cross-epoch contamination.
@@ -35,20 +35,20 @@ impl EpochVault {
         + 8   // created_at
         + 8   // closed_at
         + 1   // withdrawals_enabled
-        + 1;  // bump
+        + 1; // bump
 
     /// Calculate the net result of the epoch (deposits - withdrawals)
     pub fn net_result(&self) -> i64 {
         self.total_deposits as i64 - self.total_withdrawals as i64
     }
 
-    /// Calculate the LP share price (deposits / shares)
+    /// Calculate the LP share price (current assets / shares)
     /// Returns 0 if no shares issued yet
     pub fn share_price(&self) -> u64 {
         if self.total_shares == 0 {
             0
         } else {
-            (self.total_deposits as u128 * SCALE as u128 / self.total_shares as u128) as u64
+            (self.current_balance() as u128 * SCALE as u128 / self.total_shares as u128) as u64
         }
     }
 
@@ -131,7 +131,7 @@ impl EpochLpPosition {
         + 8   // epoch_id
         + 8   // shares
         + 1   // withdrawn
-        + 1;  // bump
+        + 1; // bump
 }
 
 #[cfg(test)]
@@ -163,7 +163,7 @@ mod tests {
             withdrawals_enabled: true,
             bump: 1,
         };
-        
+
         assert_eq!(vault.share_price(), SCALE); // 1.0 in Q32.32
     }
 
@@ -180,8 +180,25 @@ mod tests {
             withdrawals_enabled: false,
             bump: 1,
         };
-        
+
         assert_eq!(vault.share_price(), 0);
+    }
+
+    #[test]
+    fn share_price_reflects_withdrawals() {
+        let vault = EpochVault {
+            epoch_id: 1,
+            total_deposits: 100_000_000,
+            total_withdrawals: 50_000_000,
+            total_shares: 50_000_000,
+            num_lps: 1,
+            created_at: 0,
+            closed_at: 0,
+            withdrawals_enabled: true,
+            bump: 1,
+        };
+
+        assert_eq!(vault.share_price(), SCALE);
     }
 
     #[test]
@@ -197,7 +214,7 @@ mod tests {
             withdrawals_enabled: false,
             bump: 1,
         };
-        
+
         assert_eq!(vault.net_result(), 70_000_000);
     }
 }

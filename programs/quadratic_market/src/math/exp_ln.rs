@@ -17,19 +17,21 @@ pub fn exp_q32(x: i64) -> u64 {
 
     // Taylor series: e^x = Σ x^n / n! for n=0..10
     let mut result: i64 = SCALE as i64; // term 0: 1.0
-    let mut term: i64 = SCALE as i64;   // running term = x^n / n!
+    let mut term: i64 = SCALE as i64; // running term = x^n / n!
 
     for n in 1..=10_i64 {
         // term = term * x / n (in Q32.32)
         // Do (term * x) >> 32 first, then divide by n (integer)
-        let product = (term as i128)
-            .checked_mul(x as i128)
-            .unwrap_or(0);
+        let product = (term as i128).checked_mul(x as i128).unwrap_or(0);
         term = ((product >> 32) / (n as i128)) as i64;
         result = result.checked_add(term).unwrap_or(result);
     }
 
-    if result < 0 { 0 } else { result as u64 }
+    if result < 0 {
+        0
+    } else {
+        result as u64
+    }
 }
 
 /// Compute ln(x) for x in Q32.32 format, returning Q32.32.
@@ -76,10 +78,14 @@ pub fn ln_q32(x: u64) -> Result<i64> {
     for n in 1..=20_i64 {
         if n % 2 == 1 {
             // Odd: add y^n / n
-            ln_m = ln_m.checked_add(y_power / n).ok_or(QuadraticMarketError::MathOverflow)?;
+            ln_m = ln_m
+                .checked_add(y_power / n)
+                .ok_or(QuadraticMarketError::MathOverflow)?;
         } else {
             // Even: subtract y^n / n
-            ln_m = ln_m.checked_sub(y_power / n).ok_or(QuadraticMarketError::MathOverflow)?;
+            ln_m = ln_m
+                .checked_sub(y_power / n)
+                .ok_or(QuadraticMarketError::MathOverflow)?;
         }
         // y_power = y_power * y >> 32
         y_power = ((y_power as i128 * y as i128) >> 32) as i64;
@@ -91,7 +97,9 @@ pub fn ln_q32(x: u64) -> Result<i64> {
     }
 
     // ln(x) = ln(m) + k * ln(2)
-    let ln_x = ln_m.checked_add(k * LN2_FP).ok_or(QuadraticMarketError::MathOverflow)?;
+    let ln_x = ln_m
+        .checked_add(k * LN2_FP)
+        .ok_or(QuadraticMarketError::MathOverflow)?;
 
     Ok(ln_x)
 }

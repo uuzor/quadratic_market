@@ -1,114 +1,898 @@
-Honest take:
+import React, { useState, useMemo } from "react";
+import { X, Trash2, Receipt } from "lucide-react";
+import { betHistory } from "@/lib/sportsData";
 
-**What you actually have built** is the cleanest conditional market infrastructure I've seen come out of a hackathon context on any chain. The Solana port is genuinely complete — LMSR math with Q32.32 fixed-point, optimistic dispute settlement with geometric stake backoff, LP treasury with ERC4626 inflation fix, outcome token minting per market, sell-back to AMM, the full stack. The test suite is real, not skeleton. This isn't a prototype anymore.
+const QUICK_STAKES = [500, 1000, 2000, 5000];
 
-**Against the Kairos opportunity specifically:** You're already 80% there and don't know it. The `create_market` + `lmsr_buy_cost` + `propose_result` / `dispute_result` / `finalize_result` flow IS the conditional market primitive. What's missing to make it "conditional" rather than just prediction: parametric resolution (settle on a number crossing a threshold, not just outcome A/B), scalar markets (not just binary), and the Realms DAO hook (so a governance proposal can spin up a market and read the result). That's 2-3 weeks of work on top of what exists, not a full rebuild.
+const statusColors = {
+  won: "bg-green-500",
+  lost: "bg-red-500",
+  pending: "bg-sunset-orange",
+};
 
-**The gap the README flags** ("futarchy-style market where DAO proposals resolve based on conditional outcome") maps exactly to your `MarketStatus::AwaitingResult` flow. That state exists and is unused. You built the hook without filling it.
+const statusLabels = {
+  won: "Won",
+  lost: "Lost",
+  pending: "Pending",
+};
 
-**What needs to change before pitching Superteam/Realms:** The `max_market_exposure` is a global config cap, meaning all markets compete for the same LP headroom. For a DAO integration use case you need per-market LP allocation or the first whale market starves everything else. That's your most important architectural fix. Second, the bond mechanism (`min_market_bond = 50 USDC`) is good for spam prevention but too high for small DAOs — make it configurable per category.
+export default function BetSlip({ bets, onRemoveBet, onClearSlip }) {
+  const [stake, setStake] = useState(1000);
+  const [activeTab, setActiveTab] = useState("slip");
 
-**The LMSR math is solid.** The `exp_q32` / `ln_q32` implementation with Taylor series and argument reduction in fixed-point is genuinely production-grade. Most teams fake this with float approximations or skip it entirely. The round-trip test passing within 10% spread validates it works.
+  const totalOdds = useMemo(() => {
+    if (bets.length === 0) return 1;
+    return bets.reduce((acc, bet) => acc * bet.odds, 1);
+  }, [bets]);
 
-**Honest weaknesses:** The `finalize_result` dispute logic has a gap — when `DisputeStatus::Challenged`, the winner is determined by who staked more, not by any objective resolution mechanism. That's vulnerable to deep-pocket manipulation. For V1 it's fine, but Superteam will ask about this. Have an answer ready. Also `locked_payouts` accounting in `sell_shares` uses `saturating_sub` which silently eats underflows — that should be a hard error in production.
+  const potentialWin = totalOdds * stake;
 
-**Positioning against the 3 tiers:** Kairos (this contract, renamed and with DAO hooks) is your tier-1. EverPerp is a separate build entirely — your IVirtualz perps work maps there but this codebase doesn't. The Morpho-on-Kamino angle doesn't connect to this repo at all. Stay focused on tier-1. You have the artifact, you need the story and the Realms integration pitch, not more code.
+  const formatCurrency = (num) =>
+    num.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-**Bottom line:** Submit this as Kairos. The infrastructure quality justifies the Superteam attention. The README gap they flagged is exactly what you've built. The delta between "hackathon submission" and "something Realms actually integrates" is smaller than it looks from the outside.
+  const handleStakeInput = (e) => {
+    const raw = e.target.value.replace(/[^0-9]/g, "");
+    setStake(raw === "" ? 0 : parseInt(raw, 10));
+  };
+
+  return (
+    <aside className="w-[280px] bg-canvas border-l border-light-pearl shrink-0 flex flex-col sticky top-0 h-[calc(100vh-100px)] overflow-hidden">
+      {/* Header */}
+      <div className="px-4 pt-4 pb-0 shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h3 className="font-inter text-[15px] font-bold text-midnight">Bet Slip</h3>
+            {bets.length > 0 && (
+              <span className="bg-sunset-orange text-white font-inter text-[11px] font-bold min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center">
+                {bets.length}
+              </span>
+            )}
+          </div>
+          {bets.length > 0 && (
+            <button
+              onClick={onClearSlip}
+              className="flex items-center gap-1 text-silver-ash hover:text-midnight transition-colors"
+              title="Clear all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="font-inter text-[12px]">Clear</span>
+            </button>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-light-pearl">
+          {["slip", "history"].map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 font-inter text-[13px] font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === tab
+                  ? "border-midnight text-midnight"
+                  : "border-transparent text-silver-ash hover:text-dark-shale"
+              }`}
+            >
+              {tab === "slip" ? "Selections" : (
+                <>
+                  <Receipt className="w-3.5 h-3.5" />
+                  History
+                </>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Slip Tab */}
+      {activeTab === "slip" && (
+        <div className="flex flex-col flex-1 overflow-hidden">
+          {/* Selections list */}
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+            {bets.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <div className="w-12 h-12 rounded-full bg-cloud-whisper flex items-center justify-center">
+                  <Receipt className="w-5 h-5 text-silver-ash" />
+                </div>
+                <p className="font-inter text-[13px] text-silver-ash text-center">
+                  Click any odds to<br />add selections
+                </p>
+              </div>
+            ) : (
+              bets.map((bet) => (
+                <div key={bet.id} className="bg-cloud-whisper rounded-lg p-3 relative group border border-transparent hover:border-light-pearl transition-all">
+                  <button
+                    onClick={() => onRemoveBet(bet.id)}
+                    className="absolute top-2 right-2 text-silver-ash hover:text-midnight opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                  <div className="font-inter text-[11px] text-silver-ash mb-1 pr-5 truncate">{bet.match}</div>
+                  <div className="flex items-center justify-between pr-4">
+                    <span className="font-inter text-[13px] font-semibold text-midnight leading-tight">{bet.selection}</span>
+                    <span className="font-inter text-[15px] font-bold text-sunset-orange ml-2 shrink-0">{bet.odds.toFixed(2)}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Stake & Payout — always visible at bottom */}
+          <div className="shrink-0 border-t border-light-pearl px-4 pt-3 pb-4 space-y-3 bg-canvas">
+            {/* Stake input */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="font-inter text-[12px] font-semibold text-dark-shale uppercase tracking-wide">Stake</label>
+                <span className="font-inter text-[12px] text-silver-ash">₦</span>
+              </div>
+              <input
+                type="text"
+                value={stake === 0 ? "" : stake.toLocaleString("en-NG")}
+                onChange={handleStakeInput}
+                placeholder="Enter amount"
+                className="w-full border border-midnight/20 rounded-lg px-3 py-2 font-inter text-[15px] font-semibold text-midnight focus:outline-none focus:border-sunset-orange transition-colors bg-canvas text-right"
+              />
+            </div>
+
+            {/* Quick stake buttons */}
+            <div className="grid grid-cols-4 gap-1.5">
+              {QUICK_STAKES.map((amount) => (
+                <button
+                  key={amount}
+                  onClick={() => setStake(amount)}
+                  className={`py-1 rounded font-inter text-[11px] font-medium border transition-all ${
+                    stake === amount
+                      ? "bg-midnight text-white border-midnight"
+                      : "bg-cloud-whisper text-dark-shale border-light-pearl hover:border-silver-ash"
+                  }`}
+                >
+                  {amount >= 1000 ? `${amount / 1000}K` : amount}
+                </button>
+              ))}
+            </div>
+
+            {/* Summary rows */}
+            <div className="space-y-1.5 bg-cloud-whisper rounded-lg px-3 py-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-inter text-[12px] text-silver-ash">{bets.length} Selection{bets.length !== 1 ? "s" : ""}</span>
+                <span className="font-inter text-[12px] font-medium text-dark-shale">Accumulator</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-inter text-[12px] text-silver-ash">Total Odds</span>
+                <span className="font-inter text-[13px] font-bold text-midnight">{bets.length > 0 ? totalOdds.toFixed(2) : "—"}</span>
+              </div>
+              <div className="h-px bg-light-pearl my-1" />
+              <div className="flex items-center justify-between">
+                <span className="font-inter text-[13px] font-semibold text-dark-shale">Potential Win</span>
+                <span className="font-inter text-[15px] font-bold text-midnight">
+                  {bets.length > 0 ? `₦ ${formatCurrency(potentialWin)}` : "—"}
+                </span>
+              </div>
+            </div>
+
+            <button
+              disabled={bets.length === 0 || stake === 0}
+              className="w-full bg-sunset-orange text-white font-inter text-[14px] font-bold py-3 rounded-[20px] hover:bg-sunset-orange/90 transition-colors active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed tracking-wide"
+            >
+              PLACE BET — ₦ {stake > 0 ? formatCurrency(stake) : "0.00"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* History Tab */}
+      {activeTab === "history" && (
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+          {betHistory.map((item) => (
+            <div key={item.id} className="bg-cloud-whisper rounded-lg px-3 py-2.5 flex items-center gap-3">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${statusColors[item.status]}`} />
+              <div className="flex-1 min-w-0">
+                <div className="font-inter text-[13px] font-medium text-midnight truncate">{item.match}</div>
+                <div className="font-inter text-[11px] text-silver-ash">{statusLabels[item.status]}</div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="font-inter text-[13px] font-bold text-midnight">{item.amount}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+
+------------------------------
+
+
+import React, { useRef, useState } from "react";
+import { liveMatches as defaultLiveMatches } from "@/lib/sportsData";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
+export default function LiveMatches({ onOddsClick, selectedOdds, matches = defaultLiveMatches }) {
+  const scrollRef = useRef(null);
+  const [animatingId, setAnimatingId] = useState(null);
+
+  const scroll = (dir) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollBy({ left: dir * 300, behavior: "smooth" });
+    }
+  };
+
+  const handleOddsClick = (match, market, odds) => {
+    const id = `live-${match.id}-${market}`;
+    setAnimatingId(id);
+    setTimeout(() => setAnimatingId(null), 200);
+    onOddsClick({
+      matchId: match.id,
+      match: `${match.home} vs ${match.away}`,
+      selection: `${market} (${market === "1" ? "Home" : market === "2" ? "Away" : "Draw"})`,
+      market,
+      odds,
+    });
+  };
+
+  const isSelected = (matchId, market) => {
+    return selectedOdds.some((o) => o.matchId === matchId && o.market === market);
+  };
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-red-500 live-pulse" />
+          <h2 className="font-inter text-lg font-bold text-midnight">LIVE NOW</h2>
+          <span className="bg-sunset-orange/10 text-sunset-orange font-inter text-xs font-semibold px-2.5 py-0.5 rounded-full">
+            {matches.length} Live
+          </span>
+        </div>
+        <div className="flex gap-1">
+          <button onClick={() => scroll(-1)} className="p-1 rounded-full hover:bg-slate-mist transition-colors">
+            <ChevronLeft className="w-4 h-4 text-silver-ash" />
+          </button>
+          <button onClick={() => scroll(1)} className="p-1 rounded-full hover:bg-slate-mist transition-colors">
+            <ChevronRight className="w-4 h-4 text-silver-ash" />
+          </button>
+        </div>
+      </div>
+
+      <div ref={scrollRef} className="flex gap-3 overflow-x-auto hide-scrollbar pb-1">
+        {matches.map((match) => (
+          <div
+            key={match.id}
+            className="bg-slate-mist rounded-lg p-4 min-w-[272px] shrink-0 flex flex-col"
+          >
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 live-pulse" />
+              <span className="font-inter text-[12px] text-silver-ash">
+                {match.league} � {match.minute}
+              </span>
+            </div>
+            <div className="font-inter text-[15px] font-bold text-midnight mb-1">
+              {match.home} vs {match.away}
+            </div>
+            <div className="font-inter text-2xl font-bold text-sunset-orange text-center my-2">
+              {match.homeScore} � {match.awayScore}
+            </div>
+            <div className="flex gap-2 mt-auto">
+              {Object.entries(match.odds).map(([market, odds]) => {
+                const btnId = `live-${match.id}-${market}`;
+                const sel = isSelected(match.id, market);
+                return (
+                  <button
+                    key={market}
+                    onClick={() => handleOddsClick(match, market, odds)}
+                    className={`flex-1 py-2 rounded-lg border font-inter text-[13px] font-medium transition-all ${
+                      sel
+                        ? "bg-sunset-orange border-sunset-orange text-white"
+                        : "border-midnight/20 text-midnight hover:bg-sunset-orange hover:border-sunset-orange hover:text-white"
+                    } ${animatingId === btnId ? "odds-pop" : ""}`}
+                  >
+                    <div className="text-[10px] opacity-60">{market}</div>
+                    <div>{odds.toFixed(2)}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+=======================
+
+import React from "react";
+import { marketTabs as defaultMarketTabs } from "@/lib/sportsData";
+
+export default function MarketTabs({ activeMarket, setActiveMarket, tabs = defaultMarketTabs }) {
+  return (
+    <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1 mb-4">
+      {tabs.map((tab) => (
+        <button
+          key={tab}
+          onClick={() => setActiveMarket(tab)}
+          className={`shrink-0 px-4 py-[6px] rounded-[20px] font-inter text-[13px] font-medium transition-all border ${
+            activeMarket === tab
+              ? "bg-midnight text-white border-midnight"
+              : "bg-cloud-whisper text-dark-shale border-light-pearl hover:border-silver-ash"
+          }`}
+        >
+          {tab}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+
+------------------------
+
+
+import React, { useMemo, useState } from "react";
+import {
+  matchesByLeague as defaultMatchesByLeague,
+  oddsColumns as defaultOddsColumns,
+  marketColumnMap as defaultMarketColumnMap,
+  oddsLabelMap as defaultOddsLabelMap,
+} from "@/lib/sportsData";
+import { ChevronDown, ChevronUp } from "lucide-react";
+
+const CONTRACT_MARKET_NAMES = {
+  0: "1X2",
+  1: "O/U 2.5",
+  2: "GG / NG",
+};
+
+const CONTRACT_OUTCOME_LABELS = {
+  0: ["1", "X", "2"],
+  1: ["O2.5", "U2.5"],
+  2: ["GG", "NG"],
+};
+
+function formatContractOdd(value) {
+  const n = Number(value) / 1_000_000
+  return Number.isFinite(n) && n > 0 ? n.toFixed(2) : "�";
+}
+
+function isContractGroup(group) {
+  return Boolean(group && Array.isArray(group.markets));
+}
+
+export default function OddsTable({
+  activeMarket,
+  onOddsClick,
+  selectedOdds,
+  leagues = defaultMatchesByLeague,
+  columns = defaultOddsColumns,
+  columnMap = defaultMarketColumnMap,
+  labelMap = defaultOddsLabelMap,
+  groups = [],
+}) {
+  const [animatingId, setAnimatingId] = useState(null);
+  const [expandedMatch, setExpandedMatch] = useState(null);
+
+  const visibleColumns = columnMap[activeMarket]
+    ? columns.filter((c) => columnMap[activeMarket].includes(c.key))
+    : columns;
+
+  const isSelected = (matchId, market) => {
+    return selectedOdds.some((o) => o.matchId === matchId && o.market === market);
+  };
+
+  const handleLegacyClick = (match, col) => {
+    const id = `${match.id}-${col.key}`;
+    setAnimatingId(id);
+    setTimeout(() => setAnimatingId(null), 200);
+    onOddsClick({
+      matchId: match.id,
+      match: `${match.home} vs ${match.away}`,
+      selection: `${col.key} (${labelMap[col.key] || col.key})`,
+      market: col.key,
+      odds: match.odds[col.key],
+    });
+  };
+
+  const handleContractClick = (group, market, outcomeIndex, outcomeLabel) => {
+    const id = `${group.groupId}-${market.marketId}-${outcomeLabel}`;
+    setAnimatingId(id);
+    setTimeout(() => setAnimatingId(null), 200);
+    onOddsClick({
+      matchId: group.groupId,
+      groupId: group.groupId,
+      marketId: market.marketId,
+      match: group.title || `Group ${group.groupId}`,
+      selection: `${outcomeLabel} (${CONTRACT_MARKET_NAMES[market.marketType] || market.title || `Market ${market.groupMarketIndex + 1}`})`,
+      market: `${market.marketId}:${outcomeLabel}`,
+      odds: Number(market.currentOdds?.[outcomeIndex] || 0) / 1_000_000,
+      marketTitle: market.title,
+      marketType: market.marketType,
+      outcomeLabel,
+    });
+  };
+
+  const contractGroups = useMemo(() => groups.filter(isContractGroup), [groups]);
+  const useContractView = contractGroups.length > 0;
+
+  if (useContractView) {
+    return (
+      <div className="border border-light-pearl rounded-lg overflow-hidden">
+        <div className="bg-slate-mist flex items-center sticky top-0 z-10">
+          <div className="font-inter text-[12px] font-semibold text-silver-ash w-[80px] px-3 py-2.5 shrink-0">
+            Time
+          </div>
+          <div className="font-inter text-[12px] font-semibold text-silver-ash flex-1 min-w-[200px] px-2 py-2.5">
+            Match
+          </div>
+          <div className="font-inter text-[12px] font-semibold text-silver-ash w-[120px] px-2 py-2.5 text-right shrink-0">
+            Status
+          </div>
+          <div className="w-[44px] shrink-0" />
+        </div>
+
+        {contractGroups.map((group) => {
+          const markets = [...group.markets].sort((a, b) => (a.raw?.groupMarketIndex ?? a.index) - (b.raw?.groupMarketIndex ?? b.index))
+          const isExpanded = expandedMatch === group.groupId
+
+          return (
+            <React.Fragment key={group.groupId}>
+              <div className="flex items-center bg-canvas hover:bg-cloud-whisper border-b border-light-pearl transition-colors group">
+                <div className="font-inter text-[12px] text-silver-ash w-[80px] px-3 py-2.5 shrink-0">
+                  {group.eventStartTime ? new Date(group.eventStartTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '�'}
+                </div>
+                <div className="flex-1 min-w-[200px] px-2 py-2.5">
+                  <div className="font-inter text-[14px] font-semibold text-midnight">{group.title || `Group ${group.groupId}`}</div>
+                  <div className="font-inter text-[12px] text-silver-ash">
+                    {markets.length} markets � {group.resultFinalized ? `Final ${group.homeScore}-${group.awayScore}` : `Exposure ${group.currentExposure ? 'live' : 'open'}`}
+                  </div>
+                </div>
+                <div className="w-[120px] px-2 py-2.5 text-right shrink-0">
+                  <div className="font-inter text-[12px] font-semibold text-midnight">{group.status || 'Live'}</div>
+                  <div className="font-inter text-[11px] text-silver-ash">Group #{group.groupId}</div>
+                </div>
+                <div className="w-[44px] shrink-0 flex items-center justify-center">
+                  <button
+                    onClick={() => setExpandedMatch(isExpanded ? null : group.groupId)}
+                    className="flex items-center gap-0.5 font-inter text-[12px] text-sunset-orange hover:underline"
+                    aria-label={isExpanded ? 'Collapse match markets' : 'Expand match markets'}
+                  >
+                    {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className={`border-b border-light-pearl ${isExpanded ? 'block' : 'block'}`}>
+                <div className="bg-cloud-whisper px-4 py-3 space-y-3">
+                  {markets.slice(0, 3).map((market) => {
+                    const labels = CONTRACT_OUTCOME_LABELS[market.marketType] || Array.from({ length: market.numOutcomes || 0 }, (_, i) => `O${i + 1}`)
+                    const marketName = CONTRACT_MARKET_NAMES[market.marketType] || market.title || `Market ${market.groupMarketIndex + 1}`
+
+                    return (
+                      <div key={market.marketId} className="grid grid-cols-[180px_1fr] gap-3 items-center rounded-lg border border-light-pearl bg-canvas px-3 py-2">
+                        <div>
+                          <div className="font-inter text-[13px] font-semibold text-midnight">{marketName}</div>
+                          <div className="font-inter text-[11px] text-silver-ash">
+                            {market.status} � {market.startTime ? new Date(market.startTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '�'}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 justify-end">
+                          {labels.map((outcomeLabel, outcomeIndex) => {
+                            const btnId = `${group.groupId}-${market.marketId}-${outcomeLabel}`;
+                            const sel = isSelected(group.groupId, `${market.marketId}:${outcomeLabel}`)
+                            return (
+                              <button
+                                key={outcomeLabel}
+                                onClick={() => handleContractClick(group, market, outcomeIndex, outcomeLabel)}
+                                className={`min-w-[86px] px-3 py-2 rounded-lg border font-inter text-[13px] transition-all ${
+                                  sel
+                                    ? "bg-sunset-orange border-sunset-orange text-white font-semibold"
+                                    : "bg-cloud-whisper border-light-pearl text-midnight hover:border-sunset-orange hover:text-sunset-orange"
+                                } ${animatingId === btnId ? "odds-pop" : ""}`}
+                              >
+                                <div className="text-[10px] opacity-60">{outcomeLabel}</div>
+                                <div>{formatContractOdd(market.currentOdds?.[outcomeIndex])}</div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </React.Fragment>
+          )
+        })}
+      </div>
+    )
+  }
+
+  return (
+    <div className="border border-light-pearl rounded-lg overflow-hidden">
+      <div className="bg-slate-mist flex items-center sticky top-0 z-10">
+        <div className="font-inter text-[12px] font-semibold text-silver-ash w-[60px] px-3 py-2.5 shrink-0">
+          Time
+        </div>
+        <div className="font-inter text-[12px] font-semibold text-silver-ash flex-1 min-w-[140px] px-2 py-2.5">
+          Match
+        </div>
+        {visibleColumns.map((col) => (
+          <div
+            key={col.key}
+            className="font-inter text-[12px] font-semibold text-silver-ash w-[52px] text-center px-1 py-2.5 shrink-0"
+          >
+            {col.label}
+          </div>
+        ))}
+        <div className="w-[44px] shrink-0" />
+      </div>
+
+      {leagues.map((league) => (
+        <div key={league.league}>
+          <div className="bg-cloud-whisper px-4 py-2 border-b border-light-pearl">
+            <span className="font-inter text-[13px] font-bold text-dark-shale">{league.league}</span>
+          </div>
+          {league.matches.map((match) => (
+            <React.Fragment key={match.id}>
+              <div className="flex items-center bg-canvas hover:bg-cloud-whisper border-b border-light-pearl transition-colors group">
+                <div className="font-inter text-[12px] text-silver-ash w-[60px] px-3 py-2.5 shrink-0">
+                  {match.time}
+                </div>
+                <div className="flex-1 min-w-[140px] px-2 py-2.5">
+                  <span className="font-inter text-[14px] font-semibold text-midnight">{match.home}</span>
+                  <span className="font-inter text-[13px] text-silver-ash mx-1.5">vs</span>
+                  <span className="font-inter text-[14px] text-dark-shale">{match.away}</span>
+                </div>
+                {visibleColumns.map((col) => {
+                  const btnId = `${match.id}-${col.key}`;
+                  const sel = isSelected(match.id, col.key);
+                  return (
+                    <div key={col.key} className="w-[52px] px-1 py-1.5 shrink-0 flex justify-center">
+                      <button
+                        onClick={() => handleLegacyClick(match, col)}
+                        className={`w-[44px] py-1 rounded font-inter text-[13px] border transition-all ${
+                          sel
+                            ? "bg-sunset-orange border-sunset-orange text-white font-semibold"
+                            : "bg-cloud-whisper border-light-pearl text-midnight hover:border-sunset-orange hover:text-sunset-orange"
+                        } ${animatingId === btnId ? "odds-pop" : ""}`}
+                      >
+                        {match.odds[col.key]?.toFixed(2)}
+                      </button>
+                    </div>
+                  );
+                })}
+                <div className="w-[44px] shrink-0 flex items-center justify-center">
+                  <button
+                    onClick={() => setExpandedMatch(expandedMatch === match.id ? null : match.id)}
+                    className="flex items-center gap-0.5 font-inter text-[12px] text-sunset-orange hover:underline"
+                  >
+                    +{match.more}
+                    {expandedMatch === match.id ? (
+                      <ChevronUp className="w-3 h-3" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              {expandedMatch === match.id && (
+                <div className="bg-cloud-whisper px-6 py-4 border-b border-light-pearl">
+                  <div className="font-inter text-[12px] text-silver-ash mb-2">All Markets � {match.home} vs {match.away}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {columns.map((col) => {
+                      const sel = isSelected(match.id, col.key);
+                      return (
+                        <button
+                          key={col.key}
+                          onClick={() => handleLegacyClick(match, col)}
+                          className={`px-3 py-1.5 rounded-lg font-inter text-[12px] border transition-all ${
+                            sel
+                              ? "bg-sunset-orange border-sunset-orange text-white"
+                              : "bg-canvas border-light-pearl text-midnight hover:border-sunset-orange"
+                          }`}
+                        >
+                          <span className="text-silver-ash mr-1">{col.label}</span>
+                          <span className="font-semibold">{match.odds[col.key]?.toFixed(2)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+---------------------
+
+
+import React from "react";
+import { sportsCategories, popularLeagues } from "@/lib/sportsData";
+
+export default function Sidebar({ activeSport, setActiveSport }) {
+  return (
+    <aside className="w-[220px] bg-canvas border-r border-light-pearl shrink-0 overflow-y-auto h-full hidden lg:block">
+      <div className="py-4">
+        <h3 className="font-inter text-[11px] font-semibold text-silver-ash uppercase tracking-wider px-5 mb-2">
+          Sports
+        </h3>
+        {sportsCategories.map((sport) => {
+          const isActive = activeSport === sport.name;
+          return (
+            <button
+              key={sport.name}
+              onClick={() => setActiveSport(sport.name)}
+              className={`w-full flex items-center gap-3 px-5 py-[10px] font-inter text-[14px] transition-all text-left ${
+                isActive
+                  ? "border-l-[3px] border-l-sunset-orange bg-slate-mist text-midnight font-medium"
+                  : "border-l-[3px] border-l-transparent text-midnight hover:bg-cloud-whisper"
+              }`}
+            >
+              <span className="text-base">{sport.icon}</span>
+              <span className="flex-1">{sport.name}</span>
+              <span className="font-inter text-[12px] text-silver-ash">({sport.count})</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="border-t border-light-pearl py-4">
+        <h3 className="font-inter text-[11px] font-semibold text-silver-ash uppercase tracking-wider px-5 mb-2">
+          Popular Leagues
+        </h3>
+        {popularLeagues.map((league) => (
+          <button
+            key={league.name}
+            className="w-full flex items-center gap-3 px-5 py-[9px] font-inter text-[13px] text-dark-shale hover:bg-cloud-whisper hover:text-midnight transition-colors text-left"
+          >
+            <span className="text-base">{league.flag}</span>
+            <span>{league.name}</span>
+          </button>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+
+-----------------------
 
 
 
-The correlated market logic is actually your entire moat. Let me think through this properly.
+import React from "react";
 
-**What Polymarket is and isn't**
+const defaultStats = [
+  { icon: "stats", label: "Total Markets Today", value: "4,521" },
+  { icon: "live", label: "Live Events", value: "12" },
+  { icon: "soon", label: "Starting Soon (1hr)", value: "34" },
+  { icon: "odds", label: "Highest Odds Today", value: "245.00" },
+];
 
-Polymarket is a news/politics/macro prediction market. Their UX is "what do you think will happen in the world." Their users are information traders — they buy YES/NO on discrete binary events and hold. Polymarket has zero interest in building 1X2 + BTTS + Over2.5 with correlated pricing. Their whole model breaks if you add parlay legs. They'll never go here. You're not competing.
-
-**What Bet9ja/Betking is and isn't**
-
-They're fixed-odds bookmakers with a centralized risk desk manually setting lines, manually adjusting exposure, manually settling. Their product is great but the backend is Web2 plumbing — they can be slow, they can void bets, they control everything. The onchain version of this hasn't been done properly because nobody solved the correlated market pricing problem at the AMM layer. You're solving it.
-
-**The actual positioning**
-
-You're not a prediction market. You're not a sportsbook. You're a **correlated outcome AMM** — the first one that prices related markets as a system rather than isolated pools. That's the real product. Sports is the first vertical because it has the richest correlation structure anyone already understands intuitively.
-
-The pitch: when someone bets on BTTS Yes, the Over 2.5 price should move. When heavy flow comes in on Arsenal Win, the Asian Handicap -1 on Arsenal should tighten automatically. No human risk manager needed. The AMM does it because the markets share a liquidity pool and the LMSR curve rebalances across correlated outcomes. That's what makes this different from every other betting dApp that's just "Polymarket but for sports" with isolated pools per market.
-
-**How the correlation logic actually works mechanically**
-
-You need a market group primitive — a parent entity that links 1X2, BTTS, Over/Under, Asian Handicap for the same match. Within a group, the q_values feed a shared LMSR parameter rather than independent B values. When flow hits BTTS Yes, it increments q in the shared space, which propagates price pressure to Over 2.5 because they're mathematically dependent (high-scoring games = goals = both teams score = over). The correlation weights can start as admin-set constants derived from historical co-occurrence data, then graduate to being learned from onchain flow over time. Your `market_ops.rs` `create_market` handler needs a `group_id` field and a `correlation_matrix` field on the group account. The LMSR cost function references group-level q rather than market-level q for correlated legs.
-
-**The parlay slip is your consumer layer**
-
-The `place_bet_with_swap` pattern from your Initia contract maps perfectly here. On Solana it becomes: user builds a slip with 5 legs across correlated markets, each leg pulls price from the group-LMSR, combined odds calculated with proper correlation discount (same-game parlay), stake locked atomically. This is exactly what Bet9ja does but the odds are set by the AMM, not a trader desk. The exposure cap per group replaces the manual risk limits. This is defensible at the infrastructure level because replicating the correlated pricing engine is hard — it's not just forking a contract.
-
-**Vertical expansion path without becoming Polymarket**
-
-Sports → Esports → Fantasy sports outcomes (player props) → Gaming (tournament brackets, kill counts, match outcomes in CS2/Valorant). All of these have the same structure: multiple correlated sub-markets around a single event. You never need to touch politics or macro. That keeps you out of Polymarket's lane permanently and also out of the regulatory crosshairs that hit political prediction markets. Sports betting regulation exists and is navigable. Political prediction market regulation in the US is a live legal fight right now.
-
-**The Solana angle**
-
-Sports betting volume is event-driven and spiky — you need a chain that can handle burst throughput cheaply. Solana is the only answer. Prediction markets on Ethereum are too expensive per transaction for multi-leg slip construction. This is a legitimate technical reason to be Solana-native, not just chain tribalism.
-
-**Name direction**
-
-Something that signals correlated flow, not prediction or betting. Think about words that mean convergence, pressure, the moment before an outcome crystallizes. You want it to feel like infrastructure, not a casino. "Apex," "Vantage," "Flux" — something that a developer would name a protocol, not something that sounds like a gambling brand. That matters because your B2B story (other apps integrating your correlated AMM as a backend) is as important as your consumer story.
-
-**One-line positioning**
-
-"The first AMM that prices correlated sports outcomes as a system — so the odds move the way the game does, not the way a trader decides."
-
-That's your differentiation from Polymarket (they do isolated binary markets), from Bet9ja (they do manual fixed odds), and from every other betting dApp (they do isolated pools with no correlation engine).
+export default function StatsBar({ stats = defaultStats }) {
+  return (
+    <div className="bg-cloud-whisper border-b border-light-pearl px-6 lg:px-10 py-2 flex items-center gap-6 overflow-x-auto hide-scrollbar">
+      {stats.map((stat, i) => (
+        <React.Fragment key={stat.label}>
+          {i > 0 && <span className="text-light-pearl hidden sm:block">|</span>}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-sm">{stat.icon}</span>
+            <span className="font-inter text-[13px] text-dark-shale">{stat.label}:</span>
+            <span className="font-inter text-[13px] font-semibold text-midnight">{stat.value}</span>
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
 
 
-Yes, it's feasible. Your existing contract is actually the right foundation. Here's the honest technical assessment and implementation path.
+-----------------------
 
-**What you already have that maps directly**
 
-Your `Market` account with `q_values: [u64; MAX_OUTCOMES]` and `lmsr_b: u64` is already a per-market LMSR instance. Your `lmsr_buy_cost` and `lmsr_sell_payout` in `math/lmsr.rs` work correctly. Your `trade.rs` buy/sell handlers are clean. The dispute/settlement system is complete. You're not starting from scratch — you're adding a correlation layer on top.
 
-**The core architectural change needed**
+import React, { useMemo, useState } from 'react'
+import { Copy, LogOut, Wallet, ExternalLink, Loader2 } from 'lucide-react'
+import { useMagicSession } from '@/hooks/useMagicSession'
+import { cn } from '@/lib/utils'
 
-Right now each market is independent. A market has its own `q_values` and its own `lmsr_b`. Buying on Market A (BTTS Yes) has zero effect on Market B (Over 2.5) even if they're for the same match. That's the gap.
+const navLinks = ['Live', 'Pre-Match', 'Outrights', 'My Bets', 'Results']
 
-You need a new account: `MarketGroup`. This represents a single match/event and owns all the sub-markets within it. The group account holds a `correlation_matrix` — a flat array of weights that describes how strongly each market pair influences each other. When a trade happens on any market in the group, the cost function reads not just that market's q_values but also the correlated markets' q_values scaled by the correlation weight.
+export default function TopNav({ activeNav, setActiveNav }) {
+  const { isLoggedIn, isLoading, address, shortAddress, balanceEth, connect, logout, showWallet, hasConfig } = useMagicSession()
+  const [copyState, setCopyState] = useState('idle')
 
-The `Market` account gets two new fields: `group_id: u64` and `group_bump: u8` so it can reference its parent group. The `GlobalConfig` gets a `next_group_id: u64` counter.
+  const walletLabel = useMemo(() => {
+    if (!hasConfig) return 'Magic not configured'
+    if (isLoggedIn) return shortAddress || 'Wallet connected'
+    return 'Connect wallet'
+  }, [hasConfig, isLoggedIn, shortAddress])
 
-**The correlation math specifically**
+  const handleCopy = async () => {
+    if (!address) return
+    try {
+      await navigator.clipboard.writeText(address)
+      setCopyState('copied')
+      window.setTimeout(() => setCopyState('idle'), 1200)
+    } catch {
+      setCopyState('error')
+      window.setTimeout(() => setCopyState('idle'), 1200)
+    }
+  }
 
-Your existing `lmsr_buy_cost` computes cost as `B * (ln(new_sum_exp) - ln(old_sum_exp))` where the sum is over outcomes within one market. For correlated pricing you extend this to a cross-market cost function. The simplest implementable version: when computing the LMSR cost for buying outcome X in market A, you add a correlation adjustment term derived from the current q_values of correlated markets.
+  return (
+    <header className="sticky top-0 z-50 bg-canvas border-b border-light-pearl h-[60px] flex items-center px-6 lg:px-10">
+      <div className="flex items-center gap-2 mr-8 shrink-0">
+        <span className="text-lg">TB</span>
+        <span className="font-inter font-bold text-lg text-midnight tracking-tight">TradeBook</span>
+      </div>
 
-Concretely: `adjusted_q[i] = q[i] + sum over correlated markets j of (correlation_weight[A][j] * q_j_dominant_outcome)`. You pass `adjusted_q` into the existing `lmsr_buy_cost` instead of raw `q`. Your existing math functions don't change at all — you're just preprocessing the input. This is the cleanest way to do it without rewriting your LMSR core.
+      <nav className="hidden md:flex items-center gap-1 flex-1 justify-center">
+        {navLinks.map((link) => (
+          <button
+            key={link}
+            onClick={() => setActiveNav(link)}
+            className={cn(
+              'font-inter text-[15px] px-4 py-[18px] relative transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-midnight/30 rounded-md',
+              activeNav === link ? 'text-midnight font-semibold' : 'text-dark-shale hover:text-midnight'
+            )}
+          >
+            {link}
+            {activeNav === link && (
+              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-[2px] bg-midnight rounded-full" />
+            )}
+          </button>
+        ))}
+      </nav>
 
-The correlation weights are stored as basis points (0-10000) in a flat `[u64; 64]` array on the `MarketGroup` account — that's an 8x8 matrix covering up to 8 sub-markets per group, which covers 1X2 + BTTS + Over/Under + Asian Handicap + both teams score first + any other market you want. Admin sets these at group creation time based on historical co-occurrence data. For a standard football match the weights are well-known: BTTS Yes / Over 2.5 correlation is roughly 0.7-0.75, Home Win / Asian Handicap Home correlation is roughly 0.85. These are constants you hardcode initially.
+      <div className="flex items-center gap-3 ml-auto shrink-0">
+        {isLoggedIn && (
+          <div className="hidden lg:flex items-center gap-2 bg-cloud-whisper border border-light-pearl rounded-full px-3 py-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="font-inter text-[12px] text-dark-shale">{balanceEth} ETH</span>
+          </div>
+        )}
 
-**What you add to the contract, file by file**
+        {isLoggedIn && address && (
+          <div className="hidden xl:flex items-center gap-2 bg-slate-mist border border-light-pearl rounded-full px-3 py-1.5">
+            <span className="font-inter text-[12px] font-medium text-midnight">{shortAddress}</span>
+            <button
+              onClick={handleCopy}
+              className="text-silver-ash hover:text-midnight transition-colors"
+              aria-label="Copy wallet address"
+              title={copyState === 'copied' ? 'Copied' : 'Copy address'}
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
-In `state/`, add `market_group.rs`. The `MarketGroup` account holds: `group_id`, `match_id` (external reference), `start_time`, `num_markets`, `market_ids: [u64; 8]`, `correlation_matrix: [u64; 64]`, `total_group_exposure`, `status`, `bump`. Size is about 400 bytes, well within account limits.
+        <button
+          onClick={isLoggedIn ? showWallet : connect}
+          disabled={isLoading || !hasConfig}
+          className="inline-flex items-center gap-2 font-inter text-sm font-medium text-midnight border border-midnight px-4 py-1.5 rounded-[20px] hover:bg-midnight hover:text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" />}
+          <span>{isLoading ? 'Loading' : walletLabel}</span>
+        </button>
 
-In `market_ops.rs`, add `create_market_group` instruction and `add_market_to_group` instruction. `create_market_group` takes the correlation matrix as input and initializes the group account. `add_market_to_group` links an existing market PDA to a group by setting its `group_id` field.
+        {isLoggedIn ? (
+          <>
+            <button
+              onClick={showWallet}
+              className="hidden sm:inline-flex items-center gap-2 font-inter text-sm font-medium text-midnight border border-light-pearl bg-cloud-whisper px-4 py-1.5 rounded-[20px] hover:border-midnight hover:bg-slate-mist transition-colors"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Wallet
+            </button>
+            <button
+              onClick={logout}
+              className="hidden sm:inline-flex items-center gap-2 font-inter text-sm font-medium text-dark-shale border border-light-pearl px-4 py-1.5 rounded-[20px] hover:text-midnight hover:border-midnight transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Disconnect
+            </button>
+          </>
+        ) : null}
+      </div>
+    </header>
+  )
+}
 
-In `trade.rs`, modify `buy_shares_handler` to optionally load the `MarketGroup` account as a remaining account. If the market belongs to a group, run the correlation adjustment before calling `lmsr_buy_cost`. If it's standalone, behave exactly as now — no breaking change.
 
-In a new file `slip.rs`, implement the multi-leg parlay. A `BetSlip` account holds: `slip_id`, `bettor`, `legs: [SlipLeg; 8]` where `SlipLeg` is `{market_id, outcome_id, odds_snapshot, q_snapshot}`, `stake`, `combined_odds`, `potential_payout`, `status`, `placed_at`. The `place_slip` instruction iterates legs, validates each market is Open and pre-start, computes each leg's LMSR price as a probability, multiplies probabilities for the combined odds, applies a same-group correlation discount (reduces payout for highly correlated legs to protect LP), transfers stake, locks payout in global config. The correlation discount for same-group legs is simple: if two legs are in the same group and their correlation weight exceeds a threshold (say 5000 basis points = 0.5), multiply combined odds by `(1 - correlation_weight / 20000)`. This is a rough but honest correction for the fact that correlated legs aren't independent.
 
-Claim on a slip iterates legs, checks each market is Settled, checks each outcome matches the winning outcome on the market account, pays out if all legs won.
+---------------
 
-**The exposure problem across correlated markets**
 
-Your current `max_market_exposure` is a global cap. For the group model you need `max_group_exposure` on the `MarketGroup` account. When a trade hits any market in the group, increment `total_group_exposure` on the group account. When it exceeds `max_group_exposure`, reject the trade. This replaces per-market exposure caps for grouped markets and prevents the scenario where LP exposure is underestimated because correlated markets are counted independently.
+import React, { useState, useCallback } from "react";
+import TopNav from "@/components/tradebook/TopNav";
+import StatsBar from "@/components/tradebook/StatsBar";
+import Sidebar from "@/components/tradebook/Sidebar";
+import LiveMatches from "@/components/tradebook/LiveMatches";
+import MarketTabs from "@/components/tradebook/MarketTabs";
+import OddsTable from "@/components/tradebook/OddsTable";
+import BetSlip from "@/components/tradebook/BetSlip";
+import { initialBetSlip, marketTabs as defaultMarketTabs, liveMatches as defaultLiveMatches, matchesByLeague as defaultMatchesByLeague, oddsColumns as defaultOddsColumns, marketColumnMap as defaultMarketColumnMap, oddsLabelMap as defaultOddsLabelMap } from "@/lib/sportsData";
+import { useContractDashboard } from "@/hooks/useContractDashboard";
 
-**What's hard about this**
+export default function Dashboard() {
+  const { uiData } = useContractDashboard();
+  const dashboardData = uiData || {};
 
-The main difficulty is Solana's account model — you can't dynamically load a variable number of accounts in one transaction easily. Your slip instruction needs to pass each market's PDA, each outcome mint's PDA, and the group PDA as accounts. With 8 legs that's potentially 25+ accounts in one transaction. Solana allows up to 64 accounts per transaction so it's fine, but your client-side transaction construction has to be precise. Use `remainingAccounts` in Anchor for the leg-specific accounts and validate them manually in the handler rather than using Anchor's declarative constraints.
+  const [activeNav, setActiveNav] = useState("Pre-Match");
+  const [activeSport, setActiveSport] = useState("Football");
+  const [activeMarket, setActiveMarket] = useState(defaultMarketTabs[0]);
+  const [betSlip, setBetSlip] = useState(initialBetSlip);
 
-The other hard part is the correlation matrix initialization. You need good default values for the football market structure. I'd suggest starting with three tiers: high correlation (0.75, e.g. BTTS Yes + Over 2.5), medium correlation (0.45, e.g. Home Win + Under 2.5), low/no correlation (0.1, e.g. BTTS + Asian Handicap). These come from public football statistics datasets — roughly 5-10 minutes of research per market pair gives you defensible defaults.
+  const selectedOdds = betSlip.map((b) => ({ matchId: b.matchId, market: b.market }));
 
-**Implementation order**
+  const handleOddsClick = useCallback((selection) => {
+    setBetSlip((prev) => {
+      const exists = prev.find(
+        (b) => b.matchId === selection.matchId && b.market === selection.market
+      );
+      if (exists) {
+        return prev.filter((b) => b.id !== exists.id);
+      }
+      return [
+        ...prev,
+        {
+          id: `bet-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          ...selection,
+        },
+      ];
+    });
+  }, []);
 
-First add `MarketGroup` account and `create_market_group` / `add_market_to_group` instructions without touching trade logic — this is non-breaking and gets your data model right. Second, add the correlation adjustment preprocessing to `buy_shares_handler` behind a feature flag (check if `group_id != 0`). Third, write `slip.rs` with the multi-leg parlay logic. Fourth, add the correlation discount to same-group parlay legs. Fifth, update your tests to cover a full match group with all 4-5 standard football markets.
+  const handleRemoveBet = useCallback((id) => {
+    setBetSlip((prev) => prev.filter((b) => b.id !== id));
+  }, []);
 
-Total implementation estimate given your existing codebase quality: 2-3 weeks for a working version, 1 additional week for test coverage. The math is the easiest part because your LMSR core already works. The account model and client-side transaction construction is where you'll spend most of your time.
+  const handleClearSlip = useCallback(() => {
+    setBetSlip([]);
+  }, []);
 
-now good, brainstom about the positioning now, because i can position as a full sports and games focused , i was building it in conjunction with what was in contract.md , sth that can handle multibet slip with multiplier and many predictions on a particular game like bet9ja or betking does with 1x2, gg/ng over 2.5/ under 2.5 etc, but with a logic for how the relationsip between corresponding market will work eg if users are betting more on gg it should affect over 2.5 because they correspond, so think how best i can position this because i dont want to compete with polymarket
+  return (
+    <div className="h-screen flex flex-col bg-canvas overflow-hidden font-inter">
+      <TopNav activeNav={activeNav} setActiveNav={setActiveNav} />
+      <StatsBar stats={dashboardData.stats} />
+
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar activeSport={activeSport} setActiveSport={setActiveSport} />
+
+        <main className="flex-1 overflow-y-auto px-4 lg:px-6 py-4">
+          <LiveMatches
+            onOddsClick={handleOddsClick}
+            selectedOdds={selectedOdds}
+            matches={dashboardData.liveMatches || defaultLiveMatches}
+          />
+          <MarketTabs
+            activeMarket={activeMarket}
+            setActiveMarket={setActiveMarket}
+            tabs={dashboardData.marketTabs || defaultMarketTabs}
+          />
+          <OddsTable
+            activeMarket={activeMarket}
+            onOddsClick={handleOddsClick}
+            selectedOdds={selectedOdds}
+            leagues={dashboardData.matchesByLeague || defaultMatchesByLeague}
+            columns={dashboardData.oddsColumns || defaultOddsColumns}
+            columnMap={dashboardData.marketColumnMap || defaultMarketColumnMap}
+            labelMap={dashboardData.oddsLabelMap || defaultOddsLabelMap}
+            groups={dashboardData.groups || []}
+          />
+        </main>
+
+        <BetSlip bets={betSlip} onRemoveBet={handleRemoveBet} onClearSlip={handleClearSlip} />
+      </div>
+    </div>
+  );
+}
+
+

@@ -1,25 +1,17 @@
+use crate::constants::{seeds, SCALE};
+use crate::errors::QuadraticMarketError;
+use crate::state::{Epoch, GlobalConfig, PendingLiquidity, WithdrawalRequest};
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use crate::state::{GlobalConfig, WithdrawalRequest, PendingLiquidity, Epoch};
-use crate::errors::QuadraticMarketError;
-use crate::constants::{seeds, SCALE};
 
 // ─── Helper: compute fixed activation time ─────────────────────
 fn compute_activation_time(now: i64, epoch_duration: i64) -> i64 {
+    if epoch_duration <= 0 {
+        return now;
+    }
     let epoch_start = (now / epoch_duration) * epoch_duration;
     epoch_start + 2 * epoch_duration
-}
-
-// ─── Helper: advance epoch ─────────────────────────────────────
-fn advance_epoch(config: &mut GlobalConfig, now: i64) -> Result<()> {
-    if config.epoch_duration_seconds > 0 {
-        let computed = (now / config.epoch_duration_seconds) as u64;
-        if computed > config.current_epoch {
-            config.current_epoch = computed;
-        }
-    }
-    Ok(())
 }
 
 // ─── Add Liquidity ─────────────────────────────────────────────
@@ -105,7 +97,6 @@ pub fn add_liquidity_handler(ctx: Context<AddLiquidity>, amount: u64) -> Result<
     require!(amount > 0, QuadraticMarketError::InvalidAmount);
 
     let now = Clock::get()?.unix_timestamp;
-    advance_epoch(config, now)?;
 
     let activation_time = compute_activation_time(now, config.epoch_duration_seconds);
     let reserve_balance = ctx.accounts.treasury_base_ata.amount;
@@ -122,8 +113,8 @@ pub fn add_liquidity_handler(ctx: Context<AddLiquidity>, amount: u64) -> Result<
         ((amount as u128)
             .checked_mul(total_supply as u128)
             .ok_or(QuadraticMarketError::MathOverflow)?)
-            .checked_div(reserve_balance as u128)
-            .ok_or(QuadraticMarketError::MathOverflow)? as u64
+        .checked_div(reserve_balance as u128)
+        .ok_or(QuadraticMarketError::MathOverflow)? as u64
     };
 
     require!(shares_to_mint > 0, QuadraticMarketError::InvalidAmount);
@@ -156,7 +147,8 @@ pub fn add_liquidity_handler(ctx: Context<AddLiquidity>, amount: u64) -> Result<
         shares_to_mint,
     )?;
 
-    config.total_lp_supply = config.total_lp_supply
+    config.total_lp_supply = config
+        .total_lp_supply
         .checked_add(shares_to_mint)
         .ok_or(QuadraticMarketError::MathOverflow)?;
 
@@ -169,12 +161,14 @@ pub fn add_liquidity_handler(ctx: Context<AddLiquidity>, amount: u64) -> Result<
         pending.shares = shares_to_mint;
         pending.activation_time = activation_time;
         pending.amount_deposited = amount;
-        pending.bump = ctx.bumps.pending_liquidity;
+        pending.bump = *ctx.bumps.get("pending_liquidity").unwrap();
     } else {
-        pending.shares = pending.shares
+        pending.shares = pending
+            .shares
             .checked_add(shares_to_mint)
             .ok_or(QuadraticMarketError::MathOverflow)?;
-        pending.amount_deposited = pending.amount_deposited
+        pending.amount_deposited = pending
+            .amount_deposited
             .checked_add(amount)
             .ok_or(QuadraticMarketError::MathOverflow)?;
         // Keep the earliest activation_time (most conservative lock)
@@ -302,10 +296,20 @@ pub fn request_withdraw_handler(ctx: Context<RequestWithdraw>, shares: u64) -> R
                     time_bytes.copy_from_slice(&pending_data[48..56]);
                     let activation_time = i64::from_le_bytes(time_bytes);
                     let now = Clock::get()?.unix_timestamp;
-                    if now < activation_time { shares } else { 0 }
-                } else { 0 }
-            } else { 0 }
-        } else { 0 }
+                    if now < activation_time {
+                        shares
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     };
 
     if pending_locked > 0 {
@@ -334,8 +338,8 @@ pub fn request_withdraw_handler(ctx: Context<RequestWithdraw>, shares: u64) -> R
         ((free_liquidity as u128)
             .checked_mul(SCALE as u128)
             .ok_or(QuadraticMarketError::MathOverflow)?)
-            .checked_div(config.total_lp_supply as u128)
-            .ok_or(QuadraticMarketError::MathOverflow)? as u64
+        .checked_div(config.total_lp_supply as u128)
+        .ok_or(QuadraticMarketError::MathOverflow)? as u64
     } else {
         0
     };
@@ -352,7 +356,7 @@ pub fn request_withdraw_handler(ctx: Context<RequestWithdraw>, shares: u64) -> R
     req.cooldown_end = cooldown_end;
     req.nav_snapshot = free_liquidity;
     req.share_price_snapshot = share_price_snapshot;
-    req.bump = ctx.bumps.withdrawal_request;
+    req.bump = *ctx.bumps.get("withdrawal_request").unwrap();
 
     Ok(())
 }
@@ -425,7 +429,10 @@ pub fn process_withdrawal_handler(ctx: Context<ProcessWithdrawal>) -> Result<()>
     let req = &ctx.accounts.withdrawal_request;
 
     let now = Clock::get()?.unix_timestamp;
-    require!(now >= req.cooldown_end, QuadraticMarketError::CooldownNotElapsed);
+    require!(
+        now >= req.cooldown_end,
+        QuadraticMarketError::CooldownNotElapsed
+    );
 
     let total_reserve = ctx.accounts.treasury_base_ata.amount;
     let free_liquidity = config.free_liquidity(total_reserve);
@@ -434,8 +441,8 @@ pub fn process_withdrawal_handler(ctx: Context<ProcessWithdrawal>) -> Result<()>
         ((free_liquidity as u128)
             .checked_mul(SCALE as u128)
             .ok_or(QuadraticMarketError::MathOverflow)?)
-            .checked_div(config.total_lp_supply as u128)
-            .ok_or(QuadraticMarketError::MathOverflow)? as u64
+        .checked_div(config.total_lp_supply as u128)
+        .ok_or(QuadraticMarketError::MathOverflow)? as u64
     } else {
         0
     };
@@ -444,13 +451,20 @@ pub fn process_withdrawal_handler(ctx: Context<ProcessWithdrawal>) -> Result<()>
     let amount_to_return = ((req.shares as u128)
         .checked_mul(payout_price as u128)
         .ok_or(QuadraticMarketError::MathOverflow)?)
-        .checked_div(SCALE as u128)
-        .ok_or(QuadraticMarketError::MathOverflow)? as u64;
+    .checked_div(SCALE as u128)
+    .ok_or(QuadraticMarketError::MathOverflow)? as u64;
 
-    require!(amount_to_return > 0, QuadraticMarketError::InsufficientFreeLiquidity);
-    require!(free_liquidity >= amount_to_return, QuadraticMarketError::InsufficientFreeLiquidity);
+    require!(
+        amount_to_return > 0,
+        QuadraticMarketError::InsufficientFreeLiquidity
+    );
+    require!(
+        free_liquidity >= amount_to_return,
+        QuadraticMarketError::InsufficientFreeLiquidity
+    );
 
-    config.total_lp_supply = config.total_lp_supply
+    config.total_lp_supply = config
+        .total_lp_supply
         .checked_sub(req.shares)
         .ok_or(QuadraticMarketError::MathUnderflow)?;
 
@@ -512,7 +526,10 @@ pub fn activate_liquidity_handler(ctx: Context<ActivateLiquidity>) -> Result<()>
     require!(pending.shares > 0, QuadraticMarketError::NoPendingLiquidity);
 
     let now = Clock::get()?.unix_timestamp;
-    require!(now >= pending.activation_time, QuadraticMarketError::CooldownNotElapsed);
+    require!(
+        now >= pending.activation_time,
+        QuadraticMarketError::CooldownNotElapsed
+    );
 
     Ok(())
 }

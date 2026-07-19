@@ -1,5 +1,5 @@
-use anchor_lang::prelude::*;
 use crate::constants::SCALE;
+use anchor_lang::prelude::*;
 
 /// Get the current unix timestamp from the clock sysvar
 pub fn get_current_timestamp(clock: &Sysvar<Clock>) -> i64 {
@@ -136,23 +136,27 @@ pub fn multiplier_to_bps(multiplier: u64) -> u64 {
 
 /// Safe addition with overflow check, returning the result or an error.
 pub fn safe_add(a: u64, b: u64) -> Result<u64> {
-    Ok(a.checked_add(b).ok_or(crate::errors::QuadraticMarketError::MathOverflow)?)
+    Ok(a.checked_add(b)
+        .ok_or(crate::errors::QuadraticMarketError::MathOverflow)?)
 }
 
 /// Safe subtraction with underflow check, returning the result or an error.
 pub fn safe_sub(a: u64, b: u64) -> Result<u64> {
-    Ok(a.checked_sub(b).ok_or(crate::errors::QuadraticMarketError::MathUnderflow)?)
+    Ok(a.checked_sub(b)
+        .ok_or(crate::errors::QuadraticMarketError::MathUnderflow)?)
 }
 
 /// Safe multiplication with overflow check, returning the result or an error.
 pub fn safe_mul(a: u64, b: u64) -> Result<u64> {
-    Ok(a.checked_mul(b).ok_or(crate::errors::QuadraticMarketError::MathOverflow)?)
+    Ok(a.checked_mul(b)
+        .ok_or(crate::errors::QuadraticMarketError::MathOverflow)?)
 }
 
 /// Safe division with zero check, returning the result or an error.
 pub fn safe_div(a: u64, b: u64) -> Result<u64> {
     require!(b != 0, crate::errors::QuadraticMarketError::MathOverflow);
-    Ok(a.checked_div(b).ok_or(crate::errors::QuadraticMarketError::MathOverflow)?)
+    Ok(a.checked_div(b)
+        .ok_or(crate::errors::QuadraticMarketError::MathOverflow)?)
 }
 
 /// Saturating addition (returns max value on overflow instead of error).
@@ -200,17 +204,17 @@ mod tests {
     #[test]
     fn test_bit_operations() {
         let mask: u16 = 0b0101; // bits 0 and 2 set
-        
+
         assert!(has_all_bits(mask, 0b0101));
         assert!(has_all_bits(mask, 0b0100));
         assert!(!has_all_bits(mask, 0b1000));
-        
+
         // has_any_bit checks if ANY bit in the second arg is set in mask
         assert!(has_any_bit(mask, 0b0100)); // bit 2 is set in both
         assert!(has_any_bit(mask, 0b0001)); // bit 0 is set in both
         assert!(has_any_bit(mask, 0b0101)); // both bits 0 and 2 are set
         assert!(!has_any_bit(mask, 0b1010)); // bits 1 and 3 not in mask
-        
+
         assert_eq!(set_bit(mask, 3), 0b1101);
         assert_eq!(clear_bit(mask, 0), 0b0100);
         assert_eq!(is_bit_set(mask, 0), true);
@@ -224,7 +228,7 @@ mod tests {
         assert!(is_within_window(100, 50, 150));
         assert!(is_within_window(100, 100, 150));
         assert!(!is_within_window(100, 150, 200)); // After window
-        assert!(!is_within_window(100, 50, 100));  // End is exclusive
+        assert!(!is_within_window(100, 50, 100)); // End is exclusive
     }
 
     #[test]
@@ -245,7 +249,7 @@ mod tests {
     fn test_min_max_fp() {
         let a = 1_000_000_000u64; // ~0.23
         let b = 4_000_000_000u64; // ~0.93
-        
+
         assert_eq!(min_fp(a, b), a);
         assert_eq!(max_fp(a, b), b);
     }
@@ -256,7 +260,7 @@ mod tests {
         let mult = bps_to_multiplier(500); // 5%
         let expected = SCALE + (SCALE / 10000 * 500);
         assert_eq!(mult, expected);
-        
+
         // Round trip (approximate due to integer math)
         let bps = multiplier_to_bps(mult);
         assert!(bps >= 499 && bps <= 501); // Allow 1 bps tolerance
@@ -268,13 +272,13 @@ mod tests {
     fn test_safe_arithmetic() {
         assert_eq!(safe_add(1, 2).unwrap(), 3);
         assert!(safe_add(u64::MAX, 1).is_err());
-        
+
         assert_eq!(safe_sub(5, 3).unwrap(), 2);
         assert!(safe_sub(3, 5).is_err());
-        
+
         assert_eq!(safe_mul(3, 4).unwrap(), 12);
         assert!(safe_mul(u64::MAX, 2).is_err());
-        
+
         assert_eq!(safe_div(12, 4).unwrap(), 3);
         assert!(safe_div(12, 0).is_err());
     }

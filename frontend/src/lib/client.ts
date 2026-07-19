@@ -2,7 +2,7 @@
 // These functions avoid executing Solana SDK code at module level to prevent SSG errors
 
 // Program ID as constant string
-export const PROGRAM_ID_STRING = "Ag5ccPBKNJbw1JZiTaMEZ1fZpfcDFkMrrwXqCkQA5ji9";
+export const PROGRAM_ID_STRING = "4wKXu91KW6EBiecjUUYupQHjab6AULrGCm6hNrWbAvaA";
 
 // PDA seed constants as strings
 export const GLOBAL_CONFIG_SEED = "global_config";

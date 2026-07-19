@@ -1,13 +1,12 @@
-use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token};
 use crate::constants::{
-    seeds, MIN_FIRST_LIQUIDITY,
-    DEFAULT_EPOCH_DURATION_SECONDS, DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS,
-    DEFAULT_CHALLENGE_WINDOW, DEFAULT_SETTLEMENT_DEADLINE,
-    DEFAULT_MAX_SINGLE_BET, DEFAULT_MIN_ODDS_BPS, DEFAULT_MAX_ODDS_BPS, DEFAULT_HOUSE_FEE_BPS,
-    MAX_OPERATORS,
+    seeds, DEFAULT_CHALLENGE_WINDOW, DEFAULT_EPOCH_DURATION_SECONDS, DEFAULT_HOUSE_FEE_BPS,
+    DEFAULT_MAX_ODDS_BPS, DEFAULT_MAX_SINGLE_BET, DEFAULT_MIN_ODDS_BPS,
+    DEFAULT_SETTLEMENT_DEADLINE, DEFAULT_WITHDRAWAL_COOLDOWN_SECONDS, MAX_OPERATORS,
+    MIN_FIRST_LIQUIDITY,
 };
 use crate::state::GlobalConfig;
+use anchor_lang::prelude::*;
+use anchor_spl::token::{Mint, Token};
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
@@ -63,7 +62,7 @@ pub fn handler(
     config.lp_mint = ctx.accounts.lp_mint.key();
     config.base_mint = ctx.accounts.base_mint.key();
     config.treasury = ctx.accounts.treasury.key();
-    config.treasury_bump = ctx.bumps.treasury;
+    config.treasury_bump = *ctx.bumps.get("treasury").unwrap();
     config.next_market_id = 1;
     config.challenge_window_seconds = DEFAULT_CHALLENGE_WINDOW;
     config.settlement_deadline_seconds = DEFAULT_SETTLEMENT_DEADLINE;
@@ -78,7 +77,7 @@ pub fn handler(
     config.house_fee_bps = DEFAULT_HOUSE_FEE_BPS;
     config.operators = [Pubkey::default(); MAX_OPERATORS];
     config.num_operators = 0;
-    config.bump = ctx.bumps.global_config;
+    config.bump = *ctx.bumps.get("global_config").unwrap();
     config.next_order_id = 1;
     config.order_collateral_locked = 0;
     // Epoch state: start unpaused, epoch 0, next epoch starts one duration from now

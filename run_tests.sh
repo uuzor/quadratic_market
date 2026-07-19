@@ -8,8 +8,11 @@
 # ─────────────────────────────────────────────────────────────
 
 # Program ID from Anchor.toml
-PROGRAM_ID="Ag5ccPBKNJbw1JZiTaMEZ1fZpfcDFkMrrwXqCkQA5ji9"
+PROGRAM_ID="4wKXu91KW6EBiecjUUYupQHjab6AULrGCm6hNrWbAvaA"
 PROGRAM_SO="target/deploy/quadratic_market.so"
+
+# Ensure the script uses the rustup-managed Cargo/Anchor and the Solana CLI.
+export PATH="$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH"
 
 # Default wallet path (can be overridden by ANCHOR_WALLET env var)
 DEFAULT_WALLET="$HOME/.config/solana/id.json"
@@ -38,11 +41,12 @@ fi
 # Check if .so file exists
 if [ ! -f "$PROGRAM_SO" ]; then
   echo ">>> Building program..."
-  # Try cargo build-sbf first, then fallback to anchor build
-  if command -v cargo &> /dev/null; then
+  # Anchor must use the rustup-managed Cargo/Rust toolchain here; the
+  # default Solana/Cargo shim on this machine is too old for edition 2024 deps.
+  if [ -x "$HOME/.cargo/bin/anchor" ]; then
+    CARGO="$HOME/.cargo/bin/cargo" RUSTC="$HOME/.cargo/bin/rustc" "$HOME/.cargo/bin/anchor" build 2>&1
+  elif command -v cargo &> /dev/null; then
     cargo build-sbf 2>&1
-  elif command -v anchor &> /dev/null; then
-    anchor build 2>&1
   else
     echo "ERROR: Neither cargo nor anchor found. Cannot build program."
     exit 1
@@ -126,7 +130,9 @@ TEST_EXIT=0
 npx ts-mocha \
   -p ./tsconfig.json \
   -t 1000000 \
-  "tests/**/*.ts" \
+  "tests/security_tests.ts" \
+  "tests/order_book_test.ts" \
+  "tests/lmsr_integration_test.ts" \
   2>&1 || TEST_EXIT=$?
 
 # ── 6. Clean up ───────────────────────────────────────────

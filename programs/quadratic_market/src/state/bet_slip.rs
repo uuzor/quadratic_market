@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use crate::constants::MAX_SLIP_LEGS;
 
 /// Input struct for slip legs - used when placing a slip
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, Default, Copy)]

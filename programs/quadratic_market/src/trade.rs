@@ -1,9 +1,9 @@
+use crate::constants::seeds;
+use crate::errors::QuadraticMarketError;
+use crate::state::{GlobalConfig, Market, MarketStatus};
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use crate::state::{GlobalConfig, Market, MarketStatus};
-use crate::errors::QuadraticMarketError;
-use crate::constants::seeds;
 
 // ─── Buy Shares (Fixed Odds) ─────────────────────────────────────
 // Simple fixed odds trading - user pays stake, gets outcome tokens 1:1
@@ -46,16 +46,15 @@ pub struct BuyShares<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn buy_shares_handler(
-    ctx: Context<BuyShares>,
-    outcome_id: u8,
-    stake: u64,
-) -> Result<()> {
+pub fn buy_shares_handler(ctx: Context<BuyShares>, outcome_id: u8, stake: u64) -> Result<()> {
     let config = &mut ctx.accounts.global_config;
     require!(!config.paused, QuadraticMarketError::Paused);
 
     let market = &mut ctx.accounts.market;
-    require!(market.status == MarketStatus::Open, QuadraticMarketError::MarketNotOpen);
+    require!(
+        market.status == MarketStatus::Open,
+        QuadraticMarketError::MarketNotOpen
+    );
     require!(
         (outcome_id as usize) < market.num_outcomes as usize,
         QuadraticMarketError::InvalidOutcomeId
@@ -66,13 +65,22 @@ pub fn buy_shares_handler(
     require!(now < market.start_time, QuadraticMarketError::MarketExpired);
 
     // Max single-bet guard
-    require!(stake <= config.max_single_bet, QuadraticMarketError::BetTooLarge);
+    require!(
+        stake <= config.max_single_bet,
+        QuadraticMarketError::BetTooLarge
+    );
     require!(stake > 0, QuadraticMarketError::InvalidAmount);
 
     // Get fixed odds for this outcome (in basis points)
     let odds = market.odds[outcome_id as usize];
-    require!(odds >= config.min_odds_bps, QuadraticMarketError::InvalidAmount);
-    require!(odds <= config.max_odds_bps, QuadraticMarketError::InvalidAmount);
+    require!(
+        odds >= config.min_odds_bps,
+        QuadraticMarketError::InvalidAmount
+    );
+    require!(
+        odds <= config.max_odds_bps,
+        QuadraticMarketError::InvalidAmount
+    );
 
     // Apply house fee first
     let fee = stake
@@ -91,7 +99,10 @@ pub fn buy_shares_handler(
 
     // Check treasury has enough liquidity for potential payout
     let free_liquidity = config.free_liquidity(ctx.accounts.treasury_base_ata.amount);
-    require!(free_liquidity >= potential_payout, QuadraticMarketError::InsufficientLiquidity);
+    require!(
+        free_liquidity >= potential_payout,
+        QuadraticMarketError::InsufficientLiquidity
+    );
 
     // Transfer stake to treasury
     token::transfer(
@@ -123,7 +134,8 @@ pub fn buy_shares_handler(
     )?;
 
     // Update market exposure (potential liability)
-    market.exposure = market.exposure
+    market.exposure = market
+        .exposure
         .checked_add(potential_payout)
         .ok_or(QuadraticMarketError::MathOverflow)?;
     require!(
@@ -132,7 +144,8 @@ pub fn buy_shares_handler(
     );
 
     // Lock the potential payout
-    config.locked_payouts = config.locked_payouts
+    config.locked_payouts = config
+        .locked_payouts
         .checked_add(potential_payout)
         .ok_or(QuadraticMarketError::MathOverflow)?;
 
@@ -187,7 +200,10 @@ pub fn sell_shares_handler(
     require!(!config.paused, QuadraticMarketError::Paused);
 
     let market = &mut ctx.accounts.market;
-    require!(market.status == MarketStatus::Open, QuadraticMarketError::MarketNotOpen);
+    require!(
+        market.status == MarketStatus::Open,
+        QuadraticMarketError::MarketNotOpen
+    );
     require!(
         (outcome_id as usize) < market.num_outcomes as usize,
         QuadraticMarketError::InvalidOutcomeId
@@ -210,7 +226,10 @@ pub fn sell_shares_handler(
 
     // Check treasury has enough liquidity
     let free_liquidity = config.free_liquidity(ctx.accounts.treasury_base_ata.amount);
-    require!(free_liquidity >= payout, QuadraticMarketError::InsufficientLiquidity);
+    require!(
+        free_liquidity >= payout,
+        QuadraticMarketError::InsufficientLiquidity
+    );
 
     // Burn outcome tokens
     token::burn(

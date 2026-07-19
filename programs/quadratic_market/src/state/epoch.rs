@@ -5,17 +5,17 @@ use anchor_lang::prelude::*;
 /// epoch's markets have all settled.
 #[account]
 pub struct Epoch {
-    pub epoch_id: u64,                    // 8  — unique epoch identifier
-    pub start_time: i64,                  // 8  — when this epoch began
-    pub end_time: i64,                    // 8  — when this epoch ends (start + duration)
-    pub total_liquidity_added: u64,       // 8  — total base tokens added during this epoch
-    pub total_liquidity_removed: u64,     // 8  — total base tokens withdrawn after settlement
-    pub num_markets: u16,                 // 2  — number of markets created in this epoch
-    pub num_settled_markets: u16,         // 2  — number of markets that have been settled
-    pub all_markets_settled: bool,        // 1  — true when all markets in epoch are settled
-    pub withdrawals_enabled: bool,        // 1  — true when LPs can withdraw for this epoch
-    pub lp_shares_at_close: u64,          // 8  — total LP supply when epoch closed (for NAV)
-    pub bump: u8,                         // 1
+    pub epoch_id: u64,                // 8  — unique epoch identifier
+    pub start_time: i64,              // 8  — when this epoch began
+    pub end_time: i64,                // 8  — when this epoch ends (start + duration)
+    pub total_liquidity_added: u64,   // 8  — total base tokens added during this epoch
+    pub total_liquidity_removed: u64, // 8  — total base tokens withdrawn after settlement
+    pub num_markets: u16,             // 2  — number of markets created in this epoch
+    pub num_settled_markets: u16,     // 2  — number of markets that have been settled
+    pub all_markets_settled: bool,    // 1  — true when all markets in epoch are settled
+    pub withdrawals_enabled: bool,    // 1  — true when LPs can withdraw for this epoch
+    pub lp_shares_at_close: u64,      // 8  — total LP supply when epoch closed (for NAV)
+    pub bump: u8,                     // 1
 }
 
 impl Epoch {
@@ -30,7 +30,7 @@ impl Epoch {
         + 1   // all_markets_settled
         + 1   // withdrawals_enabled
         + 8   // lp_shares_at_close
-        + 1;  // bump
+        + 1; // bump
 
     /// Returns true if all markets in this epoch have been settled.
     /// Also sets `all_markets_settled` as a side-effect.
@@ -112,18 +112,18 @@ mod tests {
     #[test]
     fn test_is_active() {
         let epoch = create_test_epoch(1, 1000, 2000, 5, 0, false);
-        
-        assert!(epoch.is_active(1500));  // During epoch
-        assert!(!epoch.is_active(500));  // Before epoch
+
+        assert!(epoch.is_active(1500)); // During epoch
+        assert!(!epoch.is_active(500)); // Before epoch
         assert!(!epoch.is_active(2500)); // After epoch
     }
 
     #[test]
     fn test_is_expired() {
         let epoch = create_test_epoch(1, 1000, 2000, 5, 0, false);
-        
+
         assert!(!epoch.is_expired(1500)); // During epoch
-        assert!(epoch.is_expired(2500));  // After epoch
+        assert!(epoch.is_expired(2500)); // After epoch
     }
 
     #[test]

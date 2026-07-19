@@ -32,19 +32,19 @@ impl Default for OrderStatus {
 /// to recover locked assets. Anyone can expire an order past its deadline.
 #[account]
 pub struct LimitOrder {
-    pub order_id: u64,           // 8
-    pub creator: Pubkey,         // 32
-    pub market_id: u64,          // 8
-    pub outcome_id: u8,          // 1
-    pub side: OrderSide,         // 1
-    pub num_shares: u64,         // 8  — total shares in order
-    pub filled_shares: u64,      // 8  — shares matched so far
-    pub price_per_share: u64,    // 8  — Q32.32 implied probability (e.g. 0.5 * SCALE = 50%)
-    pub collateral_locked: u64,  // 8  — USDC locked for buy orders; 0 for sell orders
-    pub status: OrderStatus,     // 1
-    pub created_at: i64,         // 8
-    pub expires_at: i64,         // 8  — 0 = no expiry
-    pub bump: u8,                // 1
+    pub order_id: u64,          // 8
+    pub creator: Pubkey,        // 32
+    pub market_id: u64,         // 8
+    pub outcome_id: u8,         // 1
+    pub side: OrderSide,        // 1
+    pub num_shares: u64,        // 8  — total shares in order
+    pub filled_shares: u64,     // 8  — shares matched so far
+    pub price_per_share: u64,   // 8  — Q32.32 implied probability (e.g. 0.5 * SCALE = 50%)
+    pub collateral_locked: u64, // 8  — USDC locked for buy orders; 0 for sell orders
+    pub status: OrderStatus,    // 1
+    pub created_at: i64,        // 8
+    pub expires_at: i64,        // 8  — 0 = no expiry
+    pub bump: u8,               // 1
 }
 
 impl LimitOrder {
@@ -62,7 +62,7 @@ impl LimitOrder {
         + 8   // created_at
         + 8   // expires_at
         + 1   // bump
-        + 6;  // padding
+        + 6; // padding
 
     /// Shares remaining to be filled.
     pub fn remaining_shares(&self) -> u64 {
@@ -71,11 +71,17 @@ impl LimitOrder {
 
     /// True if the order can accept new fills.
     pub fn is_fillable(&self) -> bool {
-        matches!(self.status, OrderStatus::Open | OrderStatus::PartiallyFilled)
+        matches!(
+            self.status,
+            OrderStatus::Open | OrderStatus::PartiallyFilled
+        )
     }
 
     /// True if the order can be cancelled by its creator.
     pub fn is_cancellable(&self) -> bool {
-        matches!(self.status, OrderStatus::Open | OrderStatus::PartiallyFilled)
+        matches!(
+            self.status,
+            OrderStatus::Open | OrderStatus::PartiallyFilled
+        )
     }
 }

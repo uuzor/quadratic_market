@@ -5,11 +5,11 @@ use anchor_lang::prelude::*;
 /// but cannot be used for withdrawal until the activation delay passes.
 #[account]
 pub struct PendingLiquidity {
-    pub lp: Pubkey,              // 32 — depositor
-    pub shares: u64,             // 8  — locked LP shares (accumulates across deposits)
-    pub activation_time: i64,    // 8  — fixed timestamp when shares unlock
-    pub amount_deposited: u64,   // 8  — total base tokens deposited (auditing)
-    pub bump: u8,                // 1
+    pub lp: Pubkey,            // 32 — depositor
+    pub shares: u64,           // 8  — locked LP shares (accumulates across deposits)
+    pub activation_time: i64,  // 8  — fixed timestamp when shares unlock
+    pub amount_deposited: u64, // 8  — total base tokens deposited (auditing)
+    pub bump: u8,              // 1
 }
 
 impl PendingLiquidity {

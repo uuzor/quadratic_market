@@ -5,10 +5,9 @@ This bot:
 1. Creates market groups (1X2, O/U, GG/NG) for upcoming fixtures
 2. Updates odds until match start
 3. Suspends markets at match start
-4. Settles markets after match completion
+4. Settles markets with TxLINE proof
 5. Executes slip legs (backend function)
 6. Settles and resolves slips
-7. Advances epoch when all markets settled
 
 Run continuously:
     python bot.py
@@ -262,85 +261,13 @@ async def task_settle_markets(
     state: BotState
 ) -> None:
     """
-    For suspended markets past the result delay, fetch the score and settle
-    using TxLINE proof validation.
-    
-    PERMISSIONLESS: Anyone can call settle_with_proof with valid proof data.
-    
-    Flow:
-    1. Fetch final result from txodds API
-    2. Derive winning outcome from scores based on market type
-    3. Call settle_with_proof with scores
-    4. Market is settled with txline_proof_verified = true
+    Settlement is now proof-gated on-chain. The bot no longer submits the
+    removed legacy settlement flow here.
     """
-    now = int(time.time())
-    settle_threshold = now - config.RESULT_DELAY_SECONDS
-    
     for market in state.all_markets_in_stage(MarketStage.SUSPENDED):
-        if market.start_time > settle_threshold:
-            continue
-        
-        try:
-            # Get final result from txodds
-            result = await api.get_final_result(market.fixture_id)
-            if not result:
-                log.info("score_not_available", market_id=market.market_id)
-                continue
-            
-            # Determine winning outcome based on market type
-            if market.market_type == StateMarketType.ONE_X_TWO:
-                winning_outcome = result.winning_outcome
-            elif market.market_type == StateMarketType.OVER_UNDER:
-                winning_outcome = 0 if result.is_over_2_5 else 1
-            else:  # GG_NG
-                winning_outcome = 0 if result.is_gg else 1
-            
-            # Settle with TxLINE proof - PERMISSIONLESS!
-            # This demonstrates the unique TxLINE primitives:
-            # - Match result comes from txodds
-            # - Proof can be validated on-chain via CPI to Txoracle
-            # - Anyone can call this with valid data
-            await chain.settle_with_proof(
-                market_id=market.market_id,
-                proposed_outcome=winning_outcome,
-                txline_fixture_id=market.fixture_id,
-                validation_timestamp=int(time.time()),
-                home_score=result.home_score,
-                away_score=result.away_score,
-            )
-            state.advance_market(market.market_id, MarketStage.FINALIZED, proposed_outcome=winning_outcome)
-            
-            log.info("market_settled_with_proof", 
-                     market_id=market.market_id, 
-                     outcome=winning_outcome,
-                     score=f"{result.home_score}-{result.away_score}",
-                     txline_fixture_id=market.fixture_id)
-            
-        except Exception as exc:
-            log.error("settle_market_failed", 
-                      market_id=market.market_id, 
-                      error=str(exc))
-
-
-async def task_finalize_markets(
-    chain: ChainClient, 
-    state: BotState
-) -> None:
-    """
-    Finalize markets that are in PROPOSED stage and past the challenge window.
-    For admin_override, markets are already finalized.
-    """
-    # Markets settled with admin_override are already FINALIZED
-    # This task is for oracle-proposed markets
-    for market in state.all_markets_in_stage(MarketStage.PROPOSED):
-        try:
-            await chain.finalize_result(market.market_id)
-            state.advance_market(market.market_id, MarketStage.FINALIZED)
-            log.info("market_finalized", market_id=market.market_id)
-        except Exception as exc:
-            log.error("finalize_market_failed", 
-                      market_id=market.market_id, 
-                      error=str(exc))
+        log.info("market_requires_proof_settlement",
+                 market_id=market.market_id,
+                 fixture_id=market.fixture_id)
 
 
 async def task_void_expired(
@@ -382,33 +309,6 @@ async def task_settle_slips(
         log.info("market_ready_for_slip_settlement", market_id=market.market_id)
 
 
-async def task_advance_epoch(
-    chain: ChainClient, 
-    state: BotState
-) -> None:
-    """
-    Check if all markets in the current epoch are settled.
-    If yes, advance to the next epoch.
-    """
-    try:
-        cfg = await chain.fetch_global_config()
-        current_epoch = int(cfg.current_epoch)
-        epoch = await chain.fetch_epoch(current_epoch)
-        
-        # Check if all markets in epoch are settled
-        # This is simplified - actual implementation would track this properly
-        log.info("epoch_status", 
-                 epoch_id=current_epoch,
-                 total_markets=epoch.get("total_markets", 0),
-                 settled_markets=epoch.get("settled_markets", 0))
-        
-        # Would advance epoch when appropriate
-        # await chain.advance_epoch()
-        
-    except Exception as exc:
-        log.error("advance_epoch_check_failed", error=str(exc))
-
-
 # ─── Main Loop ────────────────────────────────────────────────────────────────
 
 async def run_once(chain: ChainClient, api: TxoddsApiClient, state: BotState) -> None:
@@ -426,19 +326,13 @@ async def run_once(chain: ChainClient, api: TxoddsApiClient, state: BotState) ->
     
     # 4. Settle markets after delay
     await task_settle_markets(chain, api, state)
-    
-    # 5. Finalize proposed markets
-    await task_finalize_markets(chain, state)
-    
-    # 6. Void expired markets
+
+    # 5. Void expired markets
     await task_void_expired(chain, state)
-    
-    # 7. Settle slip legs
+
+    # 6. Settle slip legs
     await task_settle_slips(chain, state)
-    
-    # 8. Advance epoch when ready
-    await task_advance_epoch(chain, state)
-    
+
     log.info("bot_pass_complete")
 
 

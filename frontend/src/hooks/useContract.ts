@@ -4,16 +4,18 @@ import { useState, useEffect, useCallback } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { Program, AnchorProvider, BN } from "@coral-xyz/anchor";
+import idl from "@/lib/idl.json";
 import {
   deriveGlobalConfig,
   deriveMarket,
+  PROGRAM_ID_STRING,
   TOKEN_PROGRAM,
   ASSOCIATED_TOKEN_PROGRAM,
   SYSTEM_PROGRAM,
 } from "@/lib/client";
 
 export function getProgramAddress(): string {
-  return "Ag5ccPBKNJbw1JZiTaMEZ1fZpfcDFkMrrwXqCkQA5ji9";
+  return PROGRAM_ID_STRING;
 }
 
 export function getGlobalConfig(): PublicKey {
@@ -35,44 +37,7 @@ export interface MarketAccount {
   winning_outcome?: number;
 }
 
-// IDL embedded for client-side use (minimal version for trading)
-const IDL = {
-  "address": "Ag5ccPBKNJbw1JZiTaMEZ1fZpfcDFkMrrwXqCkQA5ji9",
-  "metadata": { "name": "quadraticMarket", "version": "0.1.0", "spec": "0.1.0" },
-  "instructions": [
-    {
-      "name": "buyShares",
-      "accounts": [
-        { "name": "globalConfig" }, { "name": "market" }, { "name": "treasury" },
-        { "name": "buyerBaseAta" }, { "name": "treasuryBaseAta" }, { "name": "buyerOutcomeAta" },
-        { "name": "outcomeMint" }, { "name": "baseMint" }, { "name": "buyer", "signer": true },
-        { "name": "tokenProgram" }, { "name": "associatedTokenProgram" }, { "name": "systemProgram" }
-      ],
-      "args": [{ "name": "outcomeId", "type": "u64" }, { "name": "numShares", "type": "u64" }, { "name": "maxPayment", "type": "u64" }]
-    },
-    {
-      "name": "sellShares",
-      "accounts": [
-        { "name": "globalConfig" }, { "name": "market" }, { "name": "treasury" },
-        { "name": "sellerOutcomeAta" }, { "name": "sellerBaseAta" }, { "name": "treasuryBaseAta" },
-        { "name": "outcomeMint" }, { "name": "baseMint" }, { "name": "seller", "signer": true },
-        { "name": "tokenProgram" }, { "name": "associatedTokenProgram" }
-      ],
-      "args": [{ "name": "outcomeId", "type": "u64" }, { "name": "numShares", "type": "u64" }, { "name": "minPayout", "type": "u64" }]
-    },
-    {
-      "name": "addLiquidity",
-      "accounts": [
-        { "name": "globalConfig", "writable": true },
-        { "name": "lpMint" }, { "name": "treasury" }, { "name": "treasuryBaseAta" },
-        { "name": "providerBaseAta" }, { "name": "providerLpAta" }, { "name": "baseMint" },
-        { "name": "pendingLiquidity", "writable": true }, { "name": "provider", "signer": true },
-        { "name": "tokenProgram" }, { "name": "associatedTokenProgram" }, { "name": "systemProgram" }
-      ],
-      "args": [{ "name": "amount", "type": "u64" }]
-    }
-  ]
-};
+const IDL = idl as any;
 
 export function useProgram() {
   const { connection } = useConnection();
@@ -265,7 +230,7 @@ export function useAddLiquidity() {
       const globalConfig = deriveGlobalConfig();
       const pendingLiquidity = PublicKey.findProgramAddressSync(
         [Buffer.from("pending_liquidity"), publicKey.toBuffer()],
-        new PublicKey("Ag5ccPBKNJbw1JZiTaMEZ1fZpfcDFkMrrwXqCkQA5ji9")
+        new PublicKey(PROGRAM_ID_STRING)
       )[0];
 
       const tx = await program.methods

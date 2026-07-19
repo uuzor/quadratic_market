@@ -11,7 +11,7 @@ Automates the full market lifecycle using Txodds API:
 
 3. **Suspend** — at `start_time`, suspends markets (no more bets)
 
-4. **Settle with TxLINE Proof** — after `RESULT_DELAY_SECONDS`, fetches final score and settles markets using `settle_with_proof` (permissionless!)
+4. **Settle with TxLINE Proof** — after `RESULT_DELAY_SECONDS`, fetches final score and settles markets using `settle_with_proof`
 
 5. **Execute Slips** — backend executes bet slip legs (separate transaction per leg)
 
@@ -85,11 +85,7 @@ On-Chain: Validates proof, settles market
 LP/User Balances Updated
 ```
 
-**Permissionless**: Anyone can call `settle_with_proof` with valid TxLINE proof data.
-
 **Verifiable**: Markets store `txline_fixture_id` and `txline_proof_verified = true` when settled this way.
-
-**Trustless**: No admin required for settlement - the proof demonstrates the result came from TxLINE.
 
 ## Correlation Matrix (LP Protection)
 

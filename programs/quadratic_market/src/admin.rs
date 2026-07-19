@@ -1,7 +1,7 @@
-use anchor_lang::prelude::*;
-use crate::state::GlobalConfig;
-use crate::errors::QuadraticMarketError;
 use crate::constants::{seeds, MAX_OPERATORS};
+use crate::errors::QuadraticMarketError;
+use crate::state::GlobalConfig;
+use anchor_lang::prelude::*;
 
 // ─── Transfer Admin ────────────────────────────────────────────
 
@@ -107,16 +107,36 @@ pub fn update_config_handler(
     }
 
     let config = &mut ctx.accounts.global_config;
-    if let Some(v) = max_market_exposure          { config.max_market_exposure = v; }
-    if let Some(v) = challenge_window_seconds      { config.challenge_window_seconds = v; }
-    if let Some(v) = settlement_deadline_seconds { config.settlement_deadline_seconds = v; }
-    if let Some(v) = epoch_duration_seconds       { config.epoch_duration_seconds = v; }
-    if let Some(v) = withdrawal_cooldown_seconds  { config.withdrawal_cooldown_seconds = v; }
-    if let Some(v) = max_single_bet              { config.max_single_bet = v; }
-    if let Some(v) = min_odds_bps                { config.min_odds_bps = v; }
-    if let Some(v) = max_odds_bps                { config.max_odds_bps = v; }
-    if let Some(v) = house_fee_bps              { config.house_fee_bps = v; }
-    if let Some(v) = oracle_pubkey               { config.oracle_pubkey = v; }
+    if let Some(v) = max_market_exposure {
+        config.max_market_exposure = v;
+    }
+    if let Some(v) = challenge_window_seconds {
+        config.challenge_window_seconds = v;
+    }
+    if let Some(v) = settlement_deadline_seconds {
+        config.settlement_deadline_seconds = v;
+    }
+    if let Some(v) = epoch_duration_seconds {
+        config.epoch_duration_seconds = v;
+    }
+    if let Some(v) = withdrawal_cooldown_seconds {
+        config.withdrawal_cooldown_seconds = v;
+    }
+    if let Some(v) = max_single_bet {
+        config.max_single_bet = v;
+    }
+    if let Some(v) = min_odds_bps {
+        config.min_odds_bps = v;
+    }
+    if let Some(v) = max_odds_bps {
+        config.max_odds_bps = v;
+    }
+    if let Some(v) = house_fee_bps {
+        config.house_fee_bps = v;
+    }
+    if let Some(v) = oracle_pubkey {
+        config.oracle_pubkey = v;
+    }
     Ok(())
 }
 

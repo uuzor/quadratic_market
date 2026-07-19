@@ -59,14 +59,8 @@ pub enum QuadraticMarketError {
     ChallengeWindowActive = 300,
     #[msg("Challenge window has expired")]
     ChallengeWindowExpired = 301,
-    #[msg("Maximum dispute rounds reached")]
-    MaxDisputeRounds = 303,
-    #[msg("No dispute to finalize")]
-    NoDisputeToFinalize = 304,
     #[msg("Invalid proposed outcome")]
     InvalidProposedOutcome = 305,
-    #[msg("Invalid oracle signature — transaction must be signed by the oracle key")]
-    InvalidOracleSignature = 307,
 
     // 400-499: LP errors
     #[msg("Amount too small for first deposit")]
@@ -175,44 +169,10 @@ pub enum QuadraticMarketError {
     NotPaused = 806,
 
     // 900-999: Settlement errors
-    #[msg("Settlement council not found")]
-    SettlementCouncilNotFound = 900,
-    #[msg("Operator is not a valid settlement operator")]
-    InvalidSettlementOperator = 901,
-    #[msg("Operator has insufficient stake for settlement duties")]
-    InsufficientOperatorStake = 902,
-    #[msg("Settlement proposal already exists for this market")]
-    ProposalAlreadyExists = 903,
-    #[msg("Settlement proposal not found")]
-    ProposalNotFound = 904,
-    #[msg("Proposal outcome does not match")]
-    ProposalOutcomeMismatch = 905,
-    #[msg("Operator has already confirmed this proposal")]
-    AlreadyConfirmed = 906,
-    #[msg("Confirmation deadline has passed")]
-    ConfirmationDeadlinePassed = 907,
-    #[msg("Quorum not reached for settlement")]
-    QuorumNotReached = 908,
-    #[msg("Proposal already finalized")]
-    ProposalAlreadyFinalized = 909,
-    #[msg("Proposal is disputed")]
-    ProposalDisputed = 910,
-    #[msg("Invalid operator index")]
-    InvalidOperatorIndex = 911,
-    #[msg("Minimum stake requirement not met")]
-    MinStakeNotMet = 912,
-    #[msg("Confirmation window still active")]
-    ConfirmationWindowActive = 913,
-    #[msg("Operator list is full")]
-    SettlementOperatorListFull = 914,
-    #[msg("Operator not in council")]
-    OperatorNotInCouncil = 915,
     #[msg("Invalid TxLINE fixture ID")]
     InvalidTxlineFixtureId = 916,
     #[msg("TxLINE proof validation failed")]
     TxlineProofValidationFailed = 917,
-    #[msg("Scores must be positive")]
-    InvalidScore = 918,
     #[msg("Legs from same market with different outcomes are mutually exclusive")]
     CorrelatedLegsMutuallyExclusive = 919,
 }

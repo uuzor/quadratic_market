@@ -26,7 +26,6 @@ SEED_GLOBAL_CONFIG = b"global_config"
 SEED_TREASURY = b"treasury"
 SEED_MARKET = b"market"
 SEED_OUTCOME_MINT = b"outcome_mint"
-SEED_DISPUTE = b"dispute"
 SEED_SLIP = b"slip"
 SEED_EPOCH = b"epoch"
 SEED_MARKET_GROUP = b"market_group"
@@ -56,13 +55,6 @@ def market_pda(program_id: Pubkey, market_id: int) -> tuple[Pubkey, int]:
 def outcome_mint_pda(program_id: Pubkey, market_id: int, outcome_id: int) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address(
         [SEED_OUTCOME_MINT, market_id.to_bytes(8, "little"), bytes([outcome_id])],
-        program_id,
-    )
-
-
-def dispute_pda(program_id: Pubkey, market_id: int) -> tuple[Pubkey, int]:
-    return Pubkey.find_program_address(
-        [SEED_DISPUTE, market_id.to_bytes(8, "little")],
         program_id,
     )
 
@@ -451,131 +443,6 @@ class ChainClient:
         log.info("resolve_slip", slip_id=slip_id, sig=str(sig))
         return str(sig)
 
-    # ── Settlement ────────────────────────────────────────────────────────────
-
-    async def propose_result(self, market_id: int, winning_outcome: int) -> str:
-        """
-        Oracle proposes the result. Called after RESULT_DELAY_SECONDS post start_time.
-        winning_outcome: 0=Home, 1=Away (or 0=Home, 1=Draw, 2=Away for 3-way).
-        """
-        mkt_pda, _ = market_pda(self.program_id, market_id)
-        dp_pda, _ = dispute_pda(self.program_id, market_id)
-
-        sig = await self.program.rpc["propose_result"](
-            market_id,
-            winning_outcome,
-            ctx=Context(
-                accounts={
-                    "global_config": self.global_config,
-                    "market": mkt_pda,
-                    "dispute": dp_pda,
-                    "oracle": self.oracle_kp.pubkey(),
-                    "system_program": SYS_PROGRAM_ID,
-                },
-                signers=[self.oracle_kp],
-            ),
-        )
-        log.info("propose_result", market_id=market_id, outcome=winning_outcome, sig=str(sig))
-        return str(sig)
-
-    async def admin_override(self, market_id: int, winning_outcome: int) -> str:
-        """
-        Admin override to settle a market directly.
-        """
-        mkt_pda, _ = market_pda(self.program_id, market_id)
-
-        sig = await self.program.rpc["admin_override"](
-            market_id,
-            winning_outcome,
-            ctx=Context(
-                accounts={
-                    "global_config": self.global_config,
-                    "market": mkt_pda,
-                    "authority": self.operator_kp.pubkey(),
-                },
-                signers=[self.operator_kp],
-            ),
-        )
-        log.info("admin_override", market_id=market_id, outcome=winning_outcome, sig=str(sig))
-        return str(sig)
-
-    async def settle_with_proof(
-        self,
-        market_id: int,
-        proposed_outcome: int,
-        txline_fixture_id: int,
-        validation_timestamp: int,
-        home_score: int,
-        away_score: int,
-    ) -> str:
-        """
-        Settle a market using TxLINE on-chain proof validation.
-        
-        PERMISSIONLESS: Anyone can call this with valid proof data.
-        
-        Args:
-            market_id: The market to settle
-            proposed_outcome: The proposed winning outcome (0, 1, or 2)
-            txline_fixture_id: The TxLINE fixture ID for the match
-            validation_timestamp: Unix timestamp of the validation
-            home_score: Home team score from TxLINE
-            away_score: Away team score from TxLINE
-        """
-        mkt_pda, _ = market_pda(self.program_id, market_id)
-        
-        # Get epoch for the market
-        cfg = await self.fetch_global_config()
-        current_epoch = int(cfg.current_epoch)
-        ep_pda, _ = epoch_pda(self.program_id, current_epoch)
-
-        sig = await self.program.rpc["settle_with_proof"](
-            market_id,
-            proposed_outcome,
-            txline_fixture_id,
-            validation_timestamp,
-            home_score,
-            away_score,
-            ctx=Context(
-                accounts={
-                    "global_config": self.global_config,
-                    "market": mkt_pda,
-                    "epoch": ep_pda,
-                    "daily_scores_pda": Pubkey.default(),  # Would need actual PDA
-                    "caller": self.operator_kp.pubkey(),
-                },
-                signers=[self.operator_kp],
-            ),
-        )
-        log.info("settle_with_proof", 
-                 market_id=market_id, 
-                 outcome=proposed_outcome,
-                 txline_fixture_id=txline_fixture_id,
-                 score=f"{home_score}-{away_score}",
-                 sig=str(sig))
-        return str(sig)
-
-    async def finalize_result(self, market_id: int) -> str:
-        """
-        Finalize after the challenge window. Callable by anyone — bot uses operator key.
-        """
-        mkt_pda, _ = market_pda(self.program_id, market_id)
-        dp_pda, _ = dispute_pda(self.program_id, market_id)
-
-        sig = await self.program.rpc["finalize_result"](
-            market_id,
-            ctx=Context(
-                accounts={
-                    "global_config": self.global_config,
-                    "market": mkt_pda,
-                    "dispute": dp_pda,
-                    "caller": self.operator_kp.pubkey(),
-                },
-                signers=[self.operator_kp],
-            ),
-        )
-        log.info("finalize_result", market_id=market_id, sig=str(sig))
-        return str(sig)
-
     async def void_if_expired(self, market_id: int) -> str:
         """Void a market that the oracle never settled within the deadline."""
         mkt_pda, _ = market_pda(self.program_id, market_id)
@@ -613,25 +480,4 @@ class ChainClient:
             ),
         )
         log.info("init_epoch", epoch_id=epoch_id, sig=str(sig))
-        return str(sig)
-
-    async def advance_epoch(self) -> str:
-        """
-        Advance to the next epoch after all markets are settled.
-        """
-        cfg = await self.fetch_global_config()
-        epoch_id = int(cfg.current_epoch)
-        ep_pda, _ = epoch_pda(self.program_id, epoch_id)
-
-        sig = await self.program.rpc["advance_epoch"](
-            ctx=Context(
-                accounts={
-                    "global_config": self.global_config,
-                    "epoch": ep_pda,
-                    "admin": self.operator_kp.pubkey(),
-                },
-                signers=[self.operator_kp],
-            ),
-        )
-        log.info("advance_epoch", epoch_id=epoch_id, sig=str(sig))
         return str(sig)
